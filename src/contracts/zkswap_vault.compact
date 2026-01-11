@@ -6,9 +6,11 @@
  * - ZK proofs to verify balances without revealing them
  * - 0.5% fee in DUST per swap, collected to developer wallet
  * - Premium tier: Stake >100 NIGHT for batch swaps (up to 5 assets)
+ * - Liquidity provision with LP tokens and removal
+ * - Yield farming rewards for stakers
  * - Event emission for on-chain tracking
  *
- * @version 1.0.0
+ * @version 2.0.0
  * @author ZKSwap Team
  */
 
@@ -51,7 +53,9 @@ type BatchSwapOrder = {
 type StakeInfo = {
   amount: witness Field,   // Staked NIGHT amount (private)
   stakedAt: Field,         // Block number when staked
-  isPremium: Boolean       // Whether user has premium tier (>100 NIGHT)
+  isPremium: Boolean,      // Whether user has premium tier (>100 NIGHT)
+  rewardDebt: Field,       // Accumulated rewards already claimed
+  lastClaimBlock: Field    // Last block rewards were claimed
 };
 
 /**
@@ -63,7 +67,29 @@ type LiquidityPool = {
   reserveA: witness Field,  // Private reserve amount
   reserveB: witness Field,  // Private reserve amount
   totalShares: Field,
-  feeRate: Field            // Fee rate in basis points (50 = 0.5%)
+  feeRate: Field,           // Fee rate in basis points (50 = 0.5%)
+  lastUpdateBlock: Field,   // Last block pool was updated
+  accRewardsPerShare: Field // Accumulated rewards per LP share
+};
+
+/**
+ * LP position for a user in a specific pool
+ */
+type LPPosition = {
+  shares: Field,            // LP shares owned
+  depositedAt: Field,       // Block when position was created
+  rewardDebt: Field         // Reward debt for yield calculation
+};
+
+/**
+ * Reward configuration for yield farming
+ */
+type RewardConfig = {
+  rewardTokenId: Bytes[32], // Token used for rewards (NIGHT)
+  rewardPerBlock: Field,    // Rewards distributed per block
+  startBlock: Field,        // Block when rewards start
+  endBlock: Field,          // Block when rewards end
+  totalAllocPoint: Field    // Total allocation points across pools
 };
 
 // ============================================================================
@@ -122,7 +148,37 @@ event FeesCollected {
  */
 event LiquidityAdded {
   poolId: Bytes[32],
+  provider: Bytes[32],
   sharesIssued: Field,
+  timestamp: Field
+}
+
+/**
+ * Emitted when liquidity is removed from a pool
+ */
+event LiquidityRemoved {
+  poolId: Bytes[32],
+  provider: Bytes[32],
+  sharesBurned: Field,
+  timestamp: Field
+}
+
+/**
+ * Emitted when rewards are claimed
+ */
+event RewardsClaimed {
+  user: Bytes[32],
+  amount: Field,
+  timestamp: Field
+}
+
+/**
+ * Emitted on emergency withdrawal
+ */
+event EmergencyWithdraw {
+  user: Bytes[32],
+  poolId: Bytes[32],
+  amount: Field,
   timestamp: Field
 }
 
@@ -155,6 +211,9 @@ ledger {
   // Mapping of user addresses to stake info
   stakes: Map[Bytes[32], StakeInfo];
 
+  // Mapping of (user, poolId) to LP positions
+  lpPositions: Map[Bytes[64], LPPosition];
+
   // Total fees collected (cumulative)
   totalFeesCollected: Field;
 
@@ -163,6 +222,21 @@ ledger {
 
   // Pause flag for emergency
   isPaused: Boolean;
+
+  // Protocol version for upgradability
+  protocolVersion: Field;
+
+  // Reward configuration for yield farming
+  rewardConfig: RewardConfig;
+
+  // Total NIGHT staked across all users
+  totalStaked: Field;
+
+  // Minimum liquidity to prevent manipulation
+  minimumLiquidity: Field;
+
+  // Reentrancy guard
+  reentrancyLock: Boolean;
 }
 
 // ============================================================================
@@ -189,6 +263,52 @@ constructor(
   ledger.maxBatchSize = 5;
   ledger.totalFeesCollected = 0;
   ledger.isPaused = false;
+  ledger.protocolVersion = 2;
+  ledger.totalStaked = 0;
+  ledger.minimumLiquidity = 1000; // Minimum LP tokens locked
+  ledger.reentrancyLock = false;
+
+  // Initialize reward config
+  ledger.rewardConfig = RewardConfig {
+    rewardTokenId: nightToken,
+    rewardPerBlock: 1_000_000_000, // 1 NIGHT per block
+    startBlock: block.number,
+    endBlock: block.number + 10_000_000, // ~1 year of rewards
+    totalAllocPoint: 100
+  };
+}
+
+// ============================================================================
+// MODIFIERS (Implemented as assertions)
+// ============================================================================
+
+/**
+ * Check reentrancy guard and set it
+ */
+circuit enterNonReentrant() {
+  assert(!ledger.reentrancyLock, "ReentrancyGuard: reentrant call");
+  ledger.reentrancyLock = true;
+}
+
+/**
+ * Clear reentrancy guard
+ */
+circuit exitNonReentrant() {
+  ledger.reentrancyLock = false;
+}
+
+/**
+ * Require contract is not paused
+ */
+circuit requireNotPaused() {
+  assert(!ledger.isPaused, "Contract is paused");
+}
+
+/**
+ * Require sender is developer/admin
+ */
+circuit requireAdmin() {
+  assert(sender == ledger.developerWallet, "Unauthorized: admin only");
 }
 
 // ============================================================================
@@ -228,6 +348,9 @@ circuit calculateSwapOutput(
   reserveOut: witness Field,
   feeBps: Field
 ): witness Field {
+  // Validate reserves to prevent division by zero
+  assert(reserveIn > 0 && reserveOut > 0, "Invalid reserves");
+
   // Apply fee: inputAfterFee = input * (10000 - feeBps) / 10000
   let feeMultiplier = 10000 - feeBps;
   let inputAfterFee = (inputAmount * feeMultiplier) / 10000;
@@ -235,7 +358,14 @@ circuit calculateSwapOutput(
   // Constant product formula: dy = (y * dx) / (x + dx)
   let numerator = reserveOut * inputAfterFee;
   let denominator = reserveIn + inputAfterFee;
+
+  // Prevent division by zero
+  assert(denominator > 0, "Division by zero");
+
   let outputAmount = numerator / denominator;
+
+  // Ensure output is positive
+  assert(outputAmount > 0, "Output amount too small");
 
   return outputAmount;
 }
@@ -284,7 +414,7 @@ circuit verifyBatchEligibility(
   // Must be premium user
   let isPremium = stakedAmount > 100_000_000_000;
 
-  // Batch size must be within limits
+  // Batch size must be within limits (1 to maxSize inclusive)
   let validSize = batchSize >= 1 && batchSize <= maxSize;
 
   return isPremium && validSize;
@@ -327,6 +457,43 @@ circuit verifySwapCommitment(
   return commitment == expected;
 }
 
+/**
+ * ZK Circuit: Calculate pending rewards for yield farming
+ *
+ * @param shares - User's LP shares
+ * @param accRewardsPerShare - Accumulated rewards per share
+ * @param rewardDebt - User's reward debt
+ * @returns Pending reward amount
+ */
+circuit calculatePendingRewards(
+  shares: Field,
+  accRewardsPerShare: Field,
+  rewardDebt: Field
+): Field {
+  let totalReward = (shares * accRewardsPerShare) / 1_000_000_000_000; // 12 decimal precision
+  if totalReward > rewardDebt {
+    return totalReward - rewardDebt;
+  }
+  return 0;
+}
+
+/**
+ * ZK Circuit: Safe math subtraction with underflow check
+ */
+circuit safeSub(a: witness Field, b: witness Field): witness Field {
+  assert(a >= b, "Arithmetic underflow");
+  return a - b;
+}
+
+/**
+ * ZK Circuit: Safe math addition with overflow check
+ */
+circuit safeAdd(a: witness Field, b: witness Field): witness Field {
+  let result = a + b;
+  assert(result >= a, "Arithmetic overflow");
+  return result;
+}
+
 // ============================================================================
 // PUBLIC FUNCTIONS
 // ============================================================================
@@ -347,15 +514,22 @@ export circuit executeSwap(
   inputCommitment: Bytes[32],
   outputCommitment: Bytes[32]
 ): Bytes[32] {
-  // Ensure contract is not paused
-  assert(!ledger.isPaused, "Contract is paused");
+  // Reentrancy protection
+  enterNonReentrant();
+  requireNotPaused();
 
   // Verify deadline has not passed
   assert(block.number <= order.deadline, "Swap deadline exceeded");
 
+  // Validate input amount is positive
+  assert(order.inputAsset.amount > 0, "Input amount must be positive");
+
   // Get the liquidity pool for this pair
   let poolId = hash(order.inputAsset.tokenId, order.outputAsset.tokenId);
   let pool = ledger.pools[poolId];
+
+  // Verify pool exists
+  assert(pool.totalShares > 0, "Pool does not exist");
 
   // Verify user has sufficient balance using ZK proof
   let hasBalance = verifyBalance(balanceProof, order.inputAsset.amount);
@@ -383,9 +557,10 @@ export circuit executeSwap(
     ledger.developerWallet
   );
 
-  // Update pool reserves
-  pool.reserveA = pool.reserveA + order.inputAsset.amount;
-  pool.reserveB = pool.reserveB - outputAmount;
+  // Update pool reserves using safe math
+  pool.reserveA = safeAdd(pool.reserveA, order.inputAsset.amount);
+  pool.reserveB = safeSub(pool.reserveB, outputAmount);
+  pool.lastUpdateBlock = block.number;
   ledger.pools[poolId] = pool;
 
   // Update total fees collected
@@ -407,6 +582,9 @@ export circuit executeSwap(
     timestamp: block.timestamp
   };
 
+  // Release reentrancy lock
+  exitNonReentrant();
+
   return swapId;
 }
 
@@ -424,11 +602,13 @@ export circuit executeBatchSwap(
   stakeProof: witness Field,
   commitments: Bytes[32][10]  // 5 input + 5 output commitments
 ): Bytes[32] {
-  // Ensure contract is not paused
-  assert(!ledger.isPaused, "Contract is paused");
+  // Reentrancy protection
+  enterNonReentrant();
+  requireNotPaused();
 
-  // Get user's stake info
-  let stakeInfo = ledger.stakes[sender];
+  // Validate batch size
+  assert(batchOrder.activeCount >= 1, "Batch must have at least 1 order");
+  assert(batchOrder.activeCount <= ledger.maxBatchSize, "Batch size exceeds maximum");
 
   // Verify premium eligibility using ZK proof
   let isEligible = verifyBatchEligibility(
@@ -447,11 +627,17 @@ export circuit executeBatchSwap(
       let order = batchOrder.orders[i];
 
       // Verify deadline
-      assert(block.number <= order.deadline, "Swap deadline exceeded");
+      assert(block.number <= order.deadline, "Swap deadline exceeded for order");
+
+      // Validate input amount
+      assert(order.inputAsset.amount > 0, "Input amount must be positive");
 
       // Get pool and calculate output
       let poolId = hash(order.inputAsset.tokenId, order.outputAsset.tokenId);
       let pool = ledger.pools[poolId];
+
+      // Verify pool exists
+      assert(pool.totalShares > 0, "Pool does not exist");
 
       let outputAmount = calculateSwapOutput(
         order.inputAsset.amount,
@@ -468,8 +654,9 @@ export circuit executeBatchSwap(
       totalFees = totalFees + fee;
 
       // Update pool reserves
-      pool.reserveA = pool.reserveA + order.inputAsset.amount;
-      pool.reserveB = pool.reserveB - outputAmount;
+      pool.reserveA = safeAdd(pool.reserveA, order.inputAsset.amount);
+      pool.reserveB = safeSub(pool.reserveB, outputAmount);
+      pool.lastUpdateBlock = block.number;
       ledger.pools[poolId] = pool;
 
       // Execute Zswap shielded transfers
@@ -500,6 +687,8 @@ export circuit executeBatchSwap(
     timestamp: block.timestamp
   };
 
+  exitNonReentrant();
+
   return batchId;
 }
 
@@ -515,8 +704,8 @@ export circuit stake(
   amount: witness Field,
   commitment: Bytes[32]
 ): Bytes[32] {
-  // Ensure contract is not paused
-  assert(!ledger.isPaused, "Contract is paused");
+  enterNonReentrant();
+  requireNotPaused();
 
   // Verify amount is positive
   assert(amount > 0, "Stake amount must be positive");
@@ -524,8 +713,15 @@ export circuit stake(
   // Get or create stake info
   let stakeInfo = ledger.stakes[sender];
 
+  // Calculate pending rewards before updating stake
+  let pendingReward = calculatePendingRewards(
+    stakeInfo.amount,
+    ledger.rewardConfig.rewardPerBlock,
+    stakeInfo.rewardDebt
+  );
+
   // Update staked amount
-  let newAmount = stakeInfo.amount + amount;
+  let newAmount = safeAdd(stakeInfo.amount, amount);
 
   // Check premium eligibility
   let isPremium = verifyPremiumStatus(newAmount, ledger.premiumThreshold);
@@ -537,7 +733,12 @@ export circuit stake(
   stakeInfo.amount = newAmount;
   stakeInfo.stakedAt = block.number;
   stakeInfo.isPremium = isPremium;
+  stakeInfo.lastClaimBlock = block.number;
+  stakeInfo.rewardDebt = stakeInfo.rewardDebt + pendingReward;
   ledger.stakes[sender] = stakeInfo;
+
+  // Update total staked
+  ledger.totalStaked = ledger.totalStaked + amount;
 
   // Generate stake ID
   let stakeId = hash(sender, block.number, amount);
@@ -548,6 +749,8 @@ export circuit stake(
     isPremiumEligible: isPremium,
     timestamp: block.timestamp
   };
+
+  exitNonReentrant();
 
   return stakeId;
 }
@@ -564,8 +767,11 @@ export circuit unstake(
   amount: witness Field,
   commitment: Bytes[32]
 ): Bytes[32] {
-  // Ensure contract is not paused
-  assert(!ledger.isPaused, "Contract is paused");
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify amount is positive
+  assert(amount > 0, "Unstake amount must be positive");
 
   // Get stake info
   let stakeInfo = ledger.stakes[sender];
@@ -575,7 +781,7 @@ export circuit unstake(
   assert(hasStake, "Insufficient staked balance");
 
   // Calculate new staked amount
-  let newAmount = stakeInfo.amount - amount;
+  let newAmount = safeSub(stakeInfo.amount, amount);
 
   // Update premium status
   let isPremium = verifyPremiumStatus(newAmount, ledger.premiumThreshold);
@@ -588,6 +794,9 @@ export circuit unstake(
   stakeInfo.isPremium = isPremium;
   ledger.stakes[sender] = stakeInfo;
 
+  // Update total staked
+  ledger.totalStaked = safeSub(ledger.totalStaked, amount);
+
   // Generate unstake ID
   let stakeId = hash(sender, block.number, amount);
 
@@ -596,6 +805,8 @@ export circuit unstake(
     stakeId: stakeId,
     timestamp: block.timestamp
   };
+
+  exitNonReentrant();
 
   return stakeId;
 }
@@ -619,11 +830,14 @@ export circuit addLiquidity(
   commitmentA: Bytes[32],
   commitmentB: Bytes[32]
 ): Field {
-  // Ensure contract is not paused
-  assert(!ledger.isPaused, "Contract is paused");
+  enterNonReentrant();
+  requireNotPaused();
 
   // Verify positive amounts
   assert(amountA > 0 && amountB > 0, "Amounts must be positive");
+
+  // Ensure consistent token ordering
+  assert(tokenA < tokenB, "Tokens must be ordered (tokenA < tokenB)");
 
   // Get or create pool
   let poolId = hash(tokenA, tokenB);
@@ -632,14 +846,18 @@ export circuit addLiquidity(
   // Calculate shares to issue
   let shares: Field;
   if pool.totalShares == 0 {
-    // First liquidity provider - shares = sqrt(amountA * amountB)
+    // First liquidity provider - shares = sqrt(amountA * amountB) - minimumLiquidity
     shares = sqrt(amountA * amountB);
+    assert(shares > ledger.minimumLiquidity, "Insufficient initial liquidity");
+    shares = shares - ledger.minimumLiquidity; // Lock minimum liquidity
   } else {
     // Proportional shares based on existing pool
     let shareA = (amountA * pool.totalShares) / pool.reserveA;
     let shareB = (amountB * pool.totalShares) / pool.reserveB;
     shares = min(shareA, shareB);
   }
+
+  assert(shares > 0, "Shares must be positive");
 
   // Transfer tokens via Zswap
   zswap.shieldedTransfer(commitmentA);
@@ -648,21 +866,204 @@ export circuit addLiquidity(
   // Update pool
   pool.tokenA = tokenA;
   pool.tokenB = tokenB;
-  pool.reserveA = pool.reserveA + amountA;
-  pool.reserveB = pool.reserveB + amountB;
+  pool.reserveA = safeAdd(pool.reserveA, amountA);
+  pool.reserveB = safeAdd(pool.reserveB, amountB);
   pool.totalShares = pool.totalShares + shares;
   pool.feeRate = ledger.feeRateBps;
+  pool.lastUpdateBlock = block.number;
   ledger.pools[poolId] = pool;
+
+  // Update LP position
+  let positionKey = concat(sender, poolId);
+  let position = ledger.lpPositions[positionKey];
+  position.shares = position.shares + shares;
+  position.depositedAt = block.number;
+  ledger.lpPositions[positionKey] = position;
 
   // Emit event
   emit LiquidityAdded {
     poolId: poolId,
+    provider: sender,
     sharesIssued: shares,
     timestamp: block.timestamp
   };
 
+  exitNonReentrant();
+
   return shares;
 }
+
+/**
+ * Remove liquidity from a pool
+ *
+ * @param tokenA - First token ID
+ * @param tokenB - Second token ID
+ * @param shares - LP shares to burn
+ * @param minAmountA - Minimum amount of token A to receive
+ * @param minAmountB - Minimum amount of token B to receive
+ * @param commitmentA - Zswap commitment for token A output
+ * @param commitmentB - Zswap commitment for token B output
+ * @returns amountA - Actual amount of token A received
+ */
+export circuit removeLiquidity(
+  tokenA: Bytes[32],
+  tokenB: Bytes[32],
+  shares: Field,
+  minAmountA: witness Field,
+  minAmountB: witness Field,
+  commitmentA: Bytes[32],
+  commitmentB: Bytes[32]
+): Field {
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify positive shares
+  assert(shares > 0, "Shares must be positive");
+
+  // Get pool
+  let poolId = hash(tokenA, tokenB);
+  let pool = ledger.pools[poolId];
+
+  // Verify pool exists
+  assert(pool.totalShares > 0, "Pool does not exist");
+
+  // Get user's LP position
+  let positionKey = concat(sender, poolId);
+  let position = ledger.lpPositions[positionKey];
+
+  // Verify user has sufficient shares
+  assert(position.shares >= shares, "Insufficient LP shares");
+
+  // Calculate amounts to return proportionally
+  let amountA = (shares * pool.reserveA) / pool.totalShares;
+  let amountB = (shares * pool.reserveB) / pool.totalShares;
+
+  // Verify minimum amounts (slippage protection)
+  assert(amountA >= minAmountA, "Amount A below minimum");
+  assert(amountB >= minAmountB, "Amount B below minimum");
+
+  // Update pool reserves
+  pool.reserveA = safeSub(pool.reserveA, amountA);
+  pool.reserveB = safeSub(pool.reserveB, amountB);
+  pool.totalShares = pool.totalShares - shares;
+  pool.lastUpdateBlock = block.number;
+  ledger.pools[poolId] = pool;
+
+  // Update user's LP position
+  position.shares = position.shares - shares;
+  ledger.lpPositions[positionKey] = position;
+
+  // Transfer tokens back via Zswap
+  zswap.shieldedTransfer(commitmentA);
+  zswap.shieldedTransfer(commitmentB);
+
+  // Emit event
+  emit LiquidityRemoved {
+    poolId: poolId,
+    provider: sender,
+    sharesBurned: shares,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return amountA;
+}
+
+/**
+ * Claim staking rewards
+ *
+ * @param commitment - Zswap commitment for reward transfer
+ * @returns amount - Rewards claimed
+ */
+export circuit claimRewards(
+  commitment: Bytes[32]
+): Field {
+  enterNonReentrant();
+  requireNotPaused();
+
+  let stakeInfo = ledger.stakes[sender];
+
+  // Calculate pending rewards
+  let blocksSinceLastClaim = block.number - stakeInfo.lastClaimBlock;
+  let pendingReward = (stakeInfo.amount * ledger.rewardConfig.rewardPerBlock * blocksSinceLastClaim) / ledger.totalStaked;
+
+  assert(pendingReward > 0, "No rewards to claim");
+
+  // Transfer rewards via Zswap
+  zswap.transfer(
+    ledger.rewardConfig.rewardTokenId,
+    pendingReward,
+    ledger.developerWallet, // Rewards come from protocol
+    sender
+  );
+
+  // Update stake info
+  stakeInfo.lastClaimBlock = block.number;
+  stakeInfo.rewardDebt = stakeInfo.rewardDebt + pendingReward;
+  ledger.stakes[sender] = stakeInfo;
+
+  // Emit event
+  emit RewardsClaimed {
+    user: sender,
+    amount: pendingReward,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return pendingReward;
+}
+
+/**
+ * Emergency withdraw - forfeit rewards but recover stake
+ */
+export circuit emergencyWithdraw(
+  poolId: Bytes[32],
+  commitment: Bytes[32]
+) {
+  enterNonReentrant();
+  // Can be called even when paused
+
+  let positionKey = concat(sender, poolId);
+  let position = ledger.lpPositions[positionKey];
+
+  assert(position.shares > 0, "No position to withdraw");
+
+  let pool = ledger.pools[poolId];
+  let amountA = (position.shares * pool.reserveA) / pool.totalShares;
+  let amountB = (position.shares * pool.reserveB) / pool.totalShares;
+
+  // Update pool
+  pool.reserveA = safeSub(pool.reserveA, amountA);
+  pool.reserveB = safeSub(pool.reserveB, amountB);
+  pool.totalShares = pool.totalShares - position.shares;
+  ledger.pools[poolId] = pool;
+
+  // Clear position (forfeit rewards)
+  let clearedPosition = LPPosition {
+    shares: 0,
+    depositedAt: 0,
+    rewardDebt: 0
+  };
+  ledger.lpPositions[positionKey] = clearedPosition;
+
+  // Transfer via Zswap
+  zswap.shieldedTransfer(commitment);
+
+  emit EmergencyWithdraw {
+    user: sender,
+    poolId: poolId,
+    amount: amountA,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+}
+
+// ============================================================================
+// VIEW FUNCTIONS
+// ============================================================================
 
 /**
  * Query user's premium status (public view function)
@@ -712,6 +1113,75 @@ export view getPremiumThreshold(): Field {
   return ledger.premiumThreshold;
 }
 
+/**
+ * Query contract pause status
+ *
+ * @returns Boolean indicating if contract is paused
+ */
+export view getIsPaused(): Boolean {
+  return ledger.isPaused;
+}
+
+/**
+ * Query protocol version
+ *
+ * @returns Protocol version number
+ */
+export view getProtocolVersion(): Field {
+  return ledger.protocolVersion;
+}
+
+/**
+ * Query total NIGHT staked
+ *
+ * @returns Total NIGHT staked across all users
+ */
+export view getTotalStaked(): Field {
+  return ledger.totalStaked;
+}
+
+/**
+ * Query pool total shares (public info only)
+ *
+ * @param poolId - Pool ID to query
+ * @returns Total LP shares in pool
+ */
+export view getPoolTotalShares(poolId: Bytes[32]): Field {
+  let pool = ledger.pools[poolId];
+  return pool.totalShares;
+}
+
+/**
+ * Query user's LP shares in a pool
+ *
+ * @param user - User address
+ * @param poolId - Pool ID
+ * @returns User's LP shares
+ */
+export view getUserLPShares(user: Bytes[32], poolId: Bytes[32]): Field {
+  let positionKey = concat(user, poolId);
+  let position = ledger.lpPositions[positionKey];
+  return position.shares;
+}
+
+/**
+ * Query current reward rate
+ *
+ * @returns Rewards per block
+ */
+export view getRewardRate(): Field {
+  return ledger.rewardConfig.rewardPerBlock;
+}
+
+/**
+ * Query max batch size
+ *
+ * @returns Maximum swaps per batch
+ */
+export view getMaxBatchSize(): Field {
+  return ledger.maxBatchSize;
+}
+
 // ============================================================================
 // ADMIN FUNCTIONS
 // ============================================================================
@@ -722,8 +1192,11 @@ export view getPremiumThreshold(): Field {
  * @param newWallet - New developer wallet address
  */
 export circuit setDeveloperWallet(newWallet: Bytes[32]) {
-  // Only current developer wallet can update
-  assert(sender == ledger.developerWallet, "Unauthorized");
+  requireAdmin();
+
+  // Validate new wallet is not zero address
+  let zeroAddr: Bytes[32] = 0x0000000000000000000000000000000000000000000000000000000000000000;
+  assert(newWallet != zeroAddr, "Invalid wallet address");
 
   ledger.developerWallet = newWallet;
 
@@ -740,6 +1213,42 @@ export circuit setDeveloperWallet(newWallet: Bytes[32]) {
  * @param paused - New pause state
  */
 export circuit setPaused(paused: Boolean) {
-  assert(sender == ledger.developerWallet, "Unauthorized");
+  requireAdmin();
   ledger.isPaused = paused;
+}
+
+/**
+ * Update fee rate (admin only)
+ *
+ * @param newFeeRateBps - New fee rate in basis points (max 1000 = 10%)
+ */
+export circuit setFeeRate(newFeeRateBps: Field) {
+  requireAdmin();
+  assert(newFeeRateBps <= 1000, "Fee rate too high (max 10%)");
+  ledger.feeRateBps = newFeeRateBps;
+}
+
+/**
+ * Update reward configuration (admin only)
+ *
+ * @param rewardPerBlock - New rewards per block
+ * @param endBlock - New end block for rewards
+ */
+export circuit setRewardConfig(rewardPerBlock: Field, endBlock: Field) {
+  requireAdmin();
+  assert(endBlock > block.number, "End block must be in future");
+
+  ledger.rewardConfig.rewardPerBlock = rewardPerBlock;
+  ledger.rewardConfig.endBlock = endBlock;
+}
+
+/**
+ * Update premium threshold (admin only)
+ *
+ * @param newThreshold - New premium threshold in NIGHT
+ */
+export circuit setPremiumThreshold(newThreshold: Field) {
+  requireAdmin();
+  assert(newThreshold > 0, "Threshold must be positive");
+  ledger.premiumThreshold = newThreshold;
 }
