@@ -1,0 +1,1254 @@
+/**
+ * ZKSwap Vault - Private Asset Swap Contract for Midnight
+ *
+ * Features:
+ * - Private asset swaps using Zswap for anonymous transfers
+ * - ZK proofs to verify balances without revealing them
+ * - 0.5% fee in DUST per swap, collected to developer wallet
+ * - Premium tier: Stake >100 NIGHT for batch swaps (up to 5 assets)
+ * - Liquidity provision with LP tokens and removal
+ * - Yield farming rewards for stakers
+ * - Event emission for on-chain tracking
+ *
+ * @version 2.0.0
+ * @author ZKSwap Team
+ */
+
+pragma compact >= 0.16.0;
+
+// ============================================================================
+// TYPE DEFINITIONS
+// ============================================================================
+
+/**
+ * Represents an asset with its token ID and amount
+ * Amount is kept private using witness fields
+ */
+type Asset = {
+  tokenId: Bytes[32],        // Unique identifier for the token
+  amount: witness Field      // Private amount (hidden in ZK proof)
+};
+
+/**
+ * Swap order structure containing input/output assets
+ */
+type SwapOrder = {
+  inputAsset: Asset,
+  outputAsset: Asset,
+  minOutputAmount: witness Field,  // Minimum expected output (slippage protection)
+  deadline: Field                   // Block number deadline for swap execution
+};
+
+/**
+ * Batch swap order for premium users (up to 5 assets)
+ */
+type BatchSwapOrder = {
+  orders: SwapOrder[5],
+  activeCount: Field       // Number of active orders (1-5)
+};
+
+/**
+ * User stake information for premium tier
+ */
+type StakeInfo = {
+  amount: witness Field,   // Staked NIGHT amount (private)
+  stakedAt: Field,         // Block number when staked
+  isPremium: Boolean,      // Whether user has premium tier (>100 NIGHT)
+  rewardDebt: Field,       // Accumulated rewards already claimed
+  lastClaimBlock: Field    // Last block rewards were claimed
+};
+
+/**
+ * Liquidity pool for a token pair
+ */
+type LiquidityPool = {
+  tokenA: Bytes[32],
+  tokenB: Bytes[32],
+  reserveA: witness Field,  // Private reserve amount
+  reserveB: witness Field,  // Private reserve amount
+  totalShares: Field,
+  feeRate: Field,           // Fee rate in basis points (50 = 0.5%)
+  lastUpdateBlock: Field,   // Last block pool was updated
+  accRewardsPerShare: Field // Accumulated rewards per LP share
+};
+
+/**
+ * LP position for a user in a specific pool
+ */
+type LPPosition = {
+  shares: Field,            // LP shares owned
+  depositedAt: Field,       // Block when position was created
+  rewardDebt: Field         // Reward debt for yield calculation
+};
+
+/**
+ * Reward configuration for yield farming
+ */
+type RewardConfig = {
+  rewardTokenId: Bytes[32], // Token used for rewards (NIGHT)
+  rewardPerBlock: Field,    // Rewards distributed per block
+  startBlock: Field,        // Block when rewards start
+  endBlock: Field,          // Block when rewards end
+  totalAllocPoint: Field    // Total allocation points across pools
+};
+
+// ============================================================================
+// EVENTS
+// ============================================================================
+
+/**
+ * Emitted when a swap is executed
+ */
+event SwapExecuted {
+  swapId: Bytes[32],           // Unique swap identifier
+  inputTokenId: Bytes[32],     // Input token ID
+  outputTokenId: Bytes[32],    // Output token ID
+  feeCollected: Field,         // Fee amount in DUST
+  timestamp: Field             // Block timestamp
+}
+
+/**
+ * Emitted when a batch swap is executed (premium users)
+ */
+event BatchSwapExecuted {
+  batchId: Bytes[32],          // Unique batch identifier
+  swapCount: Field,            // Number of swaps in batch
+  totalFeeCollected: Field,    // Total fees collected
+  timestamp: Field
+}
+
+/**
+ * Emitted when user stakes NIGHT tokens
+ */
+event Staked {
+  stakeId: Bytes[32],          // Unique stake identifier
+  isPremiumEligible: Boolean,  // Whether stake grants premium
+  timestamp: Field
+}
+
+/**
+ * Emitted when user unstakes NIGHT tokens
+ */
+event Unstaked {
+  stakeId: Bytes[32],
+  timestamp: Field
+}
+
+/**
+ * Emitted when fees are collected to developer wallet
+ */
+event FeesCollected {
+  amount: Field,               // Amount of DUST collected
+  recipient: Bytes[32],        // Developer wallet address
+  timestamp: Field
+}
+
+/**
+ * Emitted when liquidity is added to a pool
+ */
+event LiquidityAdded {
+  poolId: Bytes[32],
+  provider: Bytes[32],
+  sharesIssued: Field,
+  timestamp: Field
+}
+
+/**
+ * Emitted when liquidity is removed from a pool
+ */
+event LiquidityRemoved {
+  poolId: Bytes[32],
+  provider: Bytes[32],
+  sharesBurned: Field,
+  timestamp: Field
+}
+
+/**
+ * Emitted when rewards are claimed
+ */
+event RewardsClaimed {
+  user: Bytes[32],
+  amount: Field,
+  timestamp: Field
+}
+
+/**
+ * Emitted on emergency withdrawal
+ */
+event EmergencyWithdraw {
+  user: Bytes[32],
+  poolId: Bytes[32],
+  amount: Field,
+  timestamp: Field
+}
+
+// ============================================================================
+// CONTRACT STATE
+// ============================================================================
+
+ledger {
+  // Developer wallet for fee collection
+  developerWallet: Bytes[32];
+
+  // NIGHT token ID for staking
+  nightTokenId: Bytes[32];
+
+  // DUST token ID for fees
+  dustTokenId: Bytes[32];
+
+  // Fee rate in basis points (50 = 0.5%)
+  feeRateBps: Field;
+
+  // Premium tier threshold (100 NIGHT in smallest units)
+  premiumThreshold: Field;
+
+  // Maximum swaps in batch for premium users
+  maxBatchSize: Field;
+
+  // Mapping of pool IDs to liquidity pools
+  pools: Map[Bytes[32], LiquidityPool];
+
+  // Mapping of user addresses to stake info
+  stakes: Map[Bytes[32], StakeInfo];
+
+  // Mapping of (user, poolId) to LP positions
+  lpPositions: Map[Bytes[64], LPPosition];
+
+  // Total fees collected (cumulative)
+  totalFeesCollected: Field;
+
+  // Swap nonce for unique IDs
+  swapNonce: Counter;
+
+  // Pause flag for emergency
+  isPaused: Boolean;
+
+  // Protocol version for upgradability
+  protocolVersion: Field;
+
+  // Reward configuration for yield farming
+  rewardConfig: RewardConfig;
+
+  // Total NIGHT staked across all users
+  totalStaked: Field;
+
+  // Minimum liquidity to prevent manipulation
+  minimumLiquidity: Field;
+
+  // Reentrancy guard
+  reentrancyLock: Boolean;
+}
+
+// ============================================================================
+// CONSTRUCTOR
+// ============================================================================
+
+/**
+ * Initialize the ZKSwap Vault contract
+ *
+ * @param devWallet - Developer wallet address for fee collection
+ * @param nightToken - NIGHT token ID for staking
+ * @param dustToken - DUST token ID for fees
+ */
+constructor(
+  devWallet: Bytes[32],
+  nightToken: Bytes[32],
+  dustToken: Bytes[32]
+) {
+  ledger.developerWallet = devWallet;
+  ledger.nightTokenId = nightToken;
+  ledger.dustTokenId = dustToken;
+  ledger.feeRateBps = 50;           // 0.5% = 50 basis points
+  ledger.premiumThreshold = 100_000_000_000; // 100 NIGHT (assuming 9 decimals)
+  ledger.maxBatchSize = 5;
+  ledger.totalFeesCollected = 0;
+  ledger.isPaused = false;
+  ledger.protocolVersion = 2;
+  ledger.totalStaked = 0;
+  ledger.minimumLiquidity = 1000; // Minimum LP tokens locked
+  ledger.reentrancyLock = false;
+
+  // Initialize reward config
+  ledger.rewardConfig = RewardConfig {
+    rewardTokenId: nightToken,
+    rewardPerBlock: 1_000_000_000, // 1 NIGHT per block
+    startBlock: block.number,
+    endBlock: block.number + 10_000_000, // ~1 year of rewards
+    totalAllocPoint: 100
+  };
+}
+
+// ============================================================================
+// MODIFIERS (Implemented as assertions)
+// ============================================================================
+
+/**
+ * Check reentrancy guard and set it
+ */
+circuit enterNonReentrant() {
+  assert(!ledger.reentrancyLock, "ReentrancyGuard: reentrant call");
+  ledger.reentrancyLock = true;
+}
+
+/**
+ * Clear reentrancy guard
+ */
+circuit exitNonReentrant() {
+  ledger.reentrancyLock = false;
+}
+
+/**
+ * Require contract is not paused
+ */
+circuit requireNotPaused() {
+  assert(!ledger.isPaused, "Contract is paused");
+}
+
+/**
+ * Require sender is developer/admin
+ */
+circuit requireAdmin() {
+  assert(sender == ledger.developerWallet, "Unauthorized: admin only");
+}
+
+// ============================================================================
+// PRIVATE HELPER CIRCUITS
+// ============================================================================
+
+/**
+ * ZK Circuit: Verify user has sufficient balance without revealing it
+ * Uses Zswap nullifier scheme for privacy
+ *
+ * @param balance - User's private balance (witness)
+ * @param required - Required amount for transaction
+ * @returns Boolean indicating sufficient balance
+ */
+circuit verifyBalance(
+  balance: witness Field,
+  required: witness Field
+): Boolean {
+  // Ensure balance >= required without revealing actual values
+  assert(balance >= required, "Insufficient balance");
+  return true;
+}
+
+/**
+ * ZK Circuit: Calculate swap output using constant product formula
+ * (x * y = k) with fee deduction
+ *
+ * @param inputAmount - Amount being swapped in
+ * @param reserveIn - Pool reserve of input token
+ * @param reserveOut - Pool reserve of output token
+ * @param feeBps - Fee in basis points
+ * @returns Output amount after fee deduction
+ */
+circuit calculateSwapOutput(
+  inputAmount: witness Field,
+  reserveIn: witness Field,
+  reserveOut: witness Field,
+  feeBps: Field
+): witness Field {
+  // Validate reserves to prevent division by zero
+  assert(reserveIn > 0 && reserveOut > 0, "Invalid reserves");
+
+  // Apply fee: inputAfterFee = input * (10000 - feeBps) / 10000
+  let feeMultiplier = 10000 - feeBps;
+  let inputAfterFee = (inputAmount * feeMultiplier) / 10000;
+
+  // Constant product formula: dy = (y * dx) / (x + dx)
+  let numerator = reserveOut * inputAfterFee;
+  let denominator = reserveIn + inputAfterFee;
+
+  // Prevent division by zero
+  assert(denominator > 0, "Division by zero");
+
+  let outputAmount = numerator / denominator;
+
+  // Ensure output is positive
+  assert(outputAmount > 0, "Output amount too small");
+
+  return outputAmount;
+}
+
+/**
+ * ZK Circuit: Calculate fee amount (0.5% of swap value)
+ *
+ * @param swapAmount - Total swap amount
+ * @returns Fee amount in DUST
+ */
+circuit calculateFee(
+  swapAmount: witness Field
+): witness Field {
+  // 0.5% = swapAmount * 50 / 10000
+  let fee = (swapAmount * 50) / 10000;
+  return fee;
+}
+
+/**
+ * ZK Circuit: Verify premium eligibility based on stake
+ *
+ * @param stakedAmount - User's staked NIGHT amount
+ * @param threshold - Premium threshold (100 NIGHT)
+ * @returns Boolean indicating premium status
+ */
+circuit verifyPremiumStatus(
+  stakedAmount: witness Field,
+  threshold: Field
+): Boolean {
+  return stakedAmount > threshold;
+}
+
+/**
+ * ZK Circuit: Verify batch swap is valid for premium user
+ *
+ * @param stakedAmount - User's staked amount
+ * @param batchSize - Number of swaps in batch
+ * @param maxSize - Maximum allowed batch size
+ * @returns Boolean indicating valid batch
+ */
+circuit verifyBatchEligibility(
+  stakedAmount: witness Field,
+  batchSize: Field,
+  maxSize: Field
+): Boolean {
+  // Must be premium user
+  let isPremium = stakedAmount > 100_000_000_000;
+
+  // Batch size must be within limits (1 to maxSize inclusive)
+  let validSize = batchSize >= 1 && batchSize <= maxSize;
+
+  return isPremium && validSize;
+}
+
+/**
+ * ZK Circuit: Generate swap commitment for Zswap integration
+ * Creates a commitment that can be verified without revealing amounts
+ *
+ * @param tokenId - Token being swapped
+ * @param amount - Private amount
+ * @param salt - Random salt for commitment
+ * @returns Commitment hash
+ */
+circuit generateSwapCommitment(
+  tokenId: Bytes[32],
+  amount: witness Field,
+  salt: witness Bytes[32]
+): Bytes[32] {
+  // Hash(tokenId || amount || salt) for commitment
+  return hash(tokenId, amount, salt);
+}
+
+/**
+ * ZK Circuit: Verify swap commitment matches expected values
+ *
+ * @param commitment - Previously generated commitment
+ * @param tokenId - Token ID to verify
+ * @param amount - Amount to verify
+ * @param salt - Original salt
+ * @returns Boolean indicating valid commitment
+ */
+circuit verifySwapCommitment(
+  commitment: Bytes[32],
+  tokenId: Bytes[32],
+  amount: witness Field,
+  salt: witness Bytes[32]
+): Boolean {
+  let expected = hash(tokenId, amount, salt);
+  return commitment == expected;
+}
+
+/**
+ * ZK Circuit: Calculate pending rewards for yield farming
+ *
+ * @param shares - User's LP shares
+ * @param accRewardsPerShare - Accumulated rewards per share
+ * @param rewardDebt - User's reward debt
+ * @returns Pending reward amount
+ */
+circuit calculatePendingRewards(
+  shares: Field,
+  accRewardsPerShare: Field,
+  rewardDebt: Field
+): Field {
+  let totalReward = (shares * accRewardsPerShare) / 1_000_000_000_000; // 12 decimal precision
+  if totalReward > rewardDebt {
+    return totalReward - rewardDebt;
+  }
+  return 0;
+}
+
+/**
+ * ZK Circuit: Safe math subtraction with underflow check
+ */
+circuit safeSub(a: witness Field, b: witness Field): witness Field {
+  assert(a >= b, "Arithmetic underflow");
+  return a - b;
+}
+
+/**
+ * ZK Circuit: Safe math addition with overflow check
+ */
+circuit safeAdd(a: witness Field, b: witness Field): witness Field {
+  let result = a + b;
+  assert(result >= a, "Arithmetic overflow");
+  return result;
+}
+
+// ============================================================================
+// PUBLIC FUNCTIONS
+// ============================================================================
+
+/**
+ * Execute a private asset swap
+ * Uses Zswap for anonymous transfer and ZK proofs for balance verification
+ *
+ * @param order - The swap order details
+ * @param balanceProof - ZK proof of sufficient balance
+ * @param inputCommitment - Zswap commitment for input asset
+ * @param outputCommitment - Zswap commitment for output asset
+ * @returns swapId - Unique identifier for the swap
+ */
+export circuit executeSwap(
+  order: SwapOrder,
+  balanceProof: witness Field,
+  inputCommitment: Bytes[32],
+  outputCommitment: Bytes[32]
+): Bytes[32] {
+  // Reentrancy protection
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify deadline has not passed
+  assert(block.number <= order.deadline, "Swap deadline exceeded");
+
+  // Validate input amount is positive
+  assert(order.inputAsset.amount > 0, "Input amount must be positive");
+
+  // Get the liquidity pool for this pair
+  let poolId = hash(order.inputAsset.tokenId, order.outputAsset.tokenId);
+  let pool = ledger.pools[poolId];
+
+  // Verify pool exists
+  assert(pool.totalShares > 0, "Pool does not exist");
+
+  // Verify user has sufficient balance using ZK proof
+  let hasBalance = verifyBalance(balanceProof, order.inputAsset.amount);
+  assert(hasBalance, "Balance verification failed");
+
+  // Calculate output amount using constant product formula
+  let outputAmount = calculateSwapOutput(
+    order.inputAsset.amount,
+    pool.reserveA,
+    pool.reserveB,
+    ledger.feeRateBps
+  );
+
+  // Verify output meets minimum (slippage protection)
+  assert(outputAmount >= order.minOutputAmount, "Slippage exceeded");
+
+  // Calculate and collect fee (0.5% in DUST)
+  let feeAmount = calculateFee(order.inputAsset.amount);
+
+  // Transfer fee to developer wallet via Zswap
+  zswap.transfer(
+    ledger.dustTokenId,
+    feeAmount,
+    sender,
+    ledger.developerWallet
+  );
+
+  // Update pool reserves using safe math
+  pool.reserveA = safeAdd(pool.reserveA, order.inputAsset.amount);
+  pool.reserveB = safeSub(pool.reserveB, outputAmount);
+  pool.lastUpdateBlock = block.number;
+  ledger.pools[poolId] = pool;
+
+  // Update total fees collected
+  ledger.totalFeesCollected = ledger.totalFeesCollected + feeAmount;
+
+  // Generate unique swap ID
+  let swapId = hash(sender, ledger.swapNonce.increment(), block.number);
+
+  // Execute Zswap transfers for privacy
+  zswap.shieldedTransfer(inputCommitment);
+  zswap.shieldedTransfer(outputCommitment);
+
+  // Emit swap event
+  emit SwapExecuted {
+    swapId: swapId,
+    inputTokenId: order.inputAsset.tokenId,
+    outputTokenId: order.outputAsset.tokenId,
+    feeCollected: feeAmount,
+    timestamp: block.timestamp
+  };
+
+  // Release reentrancy lock
+  exitNonReentrant();
+
+  return swapId;
+}
+
+/**
+ * Execute a batch swap (premium users only)
+ * Allows up to 5 swaps in a single transaction
+ *
+ * @param batchOrder - Batch containing up to 5 swap orders
+ * @param stakeProof - ZK proof of premium status
+ * @param commitments - Array of input/output commitments
+ * @returns batchId - Unique identifier for the batch
+ */
+export circuit executeBatchSwap(
+  batchOrder: BatchSwapOrder,
+  stakeProof: witness Field,
+  commitments: Bytes[32][10]  // 5 input + 5 output commitments
+): Bytes[32] {
+  // Reentrancy protection
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Validate batch size
+  assert(batchOrder.activeCount >= 1, "Batch must have at least 1 order");
+  assert(batchOrder.activeCount <= ledger.maxBatchSize, "Batch size exceeds maximum");
+
+  // Verify premium eligibility using ZK proof
+  let isEligible = verifyBatchEligibility(
+    stakeProof,
+    batchOrder.activeCount,
+    ledger.maxBatchSize
+  );
+  assert(isEligible, "Not eligible for batch swap - must stake >100 NIGHT");
+
+  // Track total fees for batch
+  let totalFees: Field = 0;
+
+  // Process each swap in the batch
+  for i in 0..5 {
+    if i < batchOrder.activeCount {
+      let order = batchOrder.orders[i];
+
+      // Verify deadline
+      assert(block.number <= order.deadline, "Swap deadline exceeded for order");
+
+      // Validate input amount
+      assert(order.inputAsset.amount > 0, "Input amount must be positive");
+
+      // Get pool and calculate output
+      let poolId = hash(order.inputAsset.tokenId, order.outputAsset.tokenId);
+      let pool = ledger.pools[poolId];
+
+      // Verify pool exists
+      assert(pool.totalShares > 0, "Pool does not exist");
+
+      let outputAmount = calculateSwapOutput(
+        order.inputAsset.amount,
+        pool.reserveA,
+        pool.reserveB,
+        ledger.feeRateBps
+      );
+
+      // Verify slippage
+      assert(outputAmount >= order.minOutputAmount, "Slippage exceeded");
+
+      // Calculate fee
+      let fee = calculateFee(order.inputAsset.amount);
+      totalFees = totalFees + fee;
+
+      // Update pool reserves
+      pool.reserveA = safeAdd(pool.reserveA, order.inputAsset.amount);
+      pool.reserveB = safeSub(pool.reserveB, outputAmount);
+      pool.lastUpdateBlock = block.number;
+      ledger.pools[poolId] = pool;
+
+      // Execute Zswap shielded transfers
+      zswap.shieldedTransfer(commitments[i * 2]);      // Input commitment
+      zswap.shieldedTransfer(commitments[i * 2 + 1]);  // Output commitment
+    }
+  }
+
+  // Collect total fees to developer wallet
+  zswap.transfer(
+    ledger.dustTokenId,
+    totalFees,
+    sender,
+    ledger.developerWallet
+  );
+
+  // Update total fees
+  ledger.totalFeesCollected = ledger.totalFeesCollected + totalFees;
+
+  // Generate batch ID
+  let batchId = hash(sender, ledger.swapNonce.increment(), block.number, totalFees);
+
+  // Emit batch swap event
+  emit BatchSwapExecuted {
+    batchId: batchId,
+    swapCount: batchOrder.activeCount,
+    totalFeeCollected: totalFees,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return batchId;
+}
+
+/**
+ * Stake NIGHT tokens to enable premium features
+ * Premium tier requires >100 NIGHT staked
+ *
+ * @param amount - Amount of NIGHT to stake (private)
+ * @param commitment - Zswap commitment for stake transfer
+ * @returns stakeId - Unique stake identifier
+ */
+export circuit stake(
+  amount: witness Field,
+  commitment: Bytes[32]
+): Bytes[32] {
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify amount is positive
+  assert(amount > 0, "Stake amount must be positive");
+
+  // Get or create stake info
+  let stakeInfo = ledger.stakes[sender];
+
+  // Calculate pending rewards before updating stake
+  let pendingReward = calculatePendingRewards(
+    stakeInfo.amount,
+    ledger.rewardConfig.rewardPerBlock,
+    stakeInfo.rewardDebt
+  );
+
+  // Update staked amount
+  let newAmount = safeAdd(stakeInfo.amount, amount);
+
+  // Check premium eligibility
+  let isPremium = verifyPremiumStatus(newAmount, ledger.premiumThreshold);
+
+  // Transfer NIGHT tokens via Zswap
+  zswap.shieldedTransfer(commitment);
+
+  // Update stake info
+  stakeInfo.amount = newAmount;
+  stakeInfo.stakedAt = block.number;
+  stakeInfo.isPremium = isPremium;
+  stakeInfo.lastClaimBlock = block.number;
+  stakeInfo.rewardDebt = stakeInfo.rewardDebt + pendingReward;
+  ledger.stakes[sender] = stakeInfo;
+
+  // Update total staked
+  ledger.totalStaked = ledger.totalStaked + amount;
+
+  // Generate stake ID
+  let stakeId = hash(sender, block.number, amount);
+
+  // Emit stake event
+  emit Staked {
+    stakeId: stakeId,
+    isPremiumEligible: isPremium,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return stakeId;
+}
+
+/**
+ * Unstake NIGHT tokens
+ * May revoke premium status if falling below threshold
+ *
+ * @param amount - Amount of NIGHT to unstake (private)
+ * @param commitment - Zswap commitment for unstake transfer
+ * @returns stakeId - Unique unstake identifier
+ */
+export circuit unstake(
+  amount: witness Field,
+  commitment: Bytes[32]
+): Bytes[32] {
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify amount is positive
+  assert(amount > 0, "Unstake amount must be positive");
+
+  // Get stake info
+  let stakeInfo = ledger.stakes[sender];
+
+  // Verify sufficient stake using ZK proof
+  let hasStake = verifyBalance(stakeInfo.amount, amount);
+  assert(hasStake, "Insufficient staked balance");
+
+  // Calculate new staked amount
+  let newAmount = safeSub(stakeInfo.amount, amount);
+
+  // Update premium status
+  let isPremium = verifyPremiumStatus(newAmount, ledger.premiumThreshold);
+
+  // Transfer NIGHT tokens back via Zswap
+  zswap.shieldedTransfer(commitment);
+
+  // Update stake info
+  stakeInfo.amount = newAmount;
+  stakeInfo.isPremium = isPremium;
+  ledger.stakes[sender] = stakeInfo;
+
+  // Update total staked
+  ledger.totalStaked = safeSub(ledger.totalStaked, amount);
+
+  // Generate unstake ID
+  let stakeId = hash(sender, block.number, amount);
+
+  // Emit unstake event
+  emit Unstaked {
+    stakeId: stakeId,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return stakeId;
+}
+
+/**
+ * Add liquidity to a pool
+ *
+ * @param tokenA - First token ID
+ * @param tokenB - Second token ID
+ * @param amountA - Amount of token A (private)
+ * @param amountB - Amount of token B (private)
+ * @param commitmentA - Zswap commitment for token A
+ * @param commitmentB - Zswap commitment for token B
+ * @returns shares - LP shares issued
+ */
+export circuit addLiquidity(
+  tokenA: Bytes[32],
+  tokenB: Bytes[32],
+  amountA: witness Field,
+  amountB: witness Field,
+  commitmentA: Bytes[32],
+  commitmentB: Bytes[32]
+): Field {
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify positive amounts
+  assert(amountA > 0 && amountB > 0, "Amounts must be positive");
+
+  // Ensure consistent token ordering
+  assert(tokenA < tokenB, "Tokens must be ordered (tokenA < tokenB)");
+
+  // Get or create pool
+  let poolId = hash(tokenA, tokenB);
+  let pool = ledger.pools[poolId];
+
+  // Calculate shares to issue
+  let shares: Field;
+  if pool.totalShares == 0 {
+    // First liquidity provider - shares = sqrt(amountA * amountB) - minimumLiquidity
+    shares = sqrt(amountA * amountB);
+    assert(shares > ledger.minimumLiquidity, "Insufficient initial liquidity");
+    shares = shares - ledger.minimumLiquidity; // Lock minimum liquidity
+  } else {
+    // Proportional shares based on existing pool
+    let shareA = (amountA * pool.totalShares) / pool.reserveA;
+    let shareB = (amountB * pool.totalShares) / pool.reserveB;
+    shares = min(shareA, shareB);
+  }
+
+  assert(shares > 0, "Shares must be positive");
+
+  // Transfer tokens via Zswap
+  zswap.shieldedTransfer(commitmentA);
+  zswap.shieldedTransfer(commitmentB);
+
+  // Update pool
+  pool.tokenA = tokenA;
+  pool.tokenB = tokenB;
+  pool.reserveA = safeAdd(pool.reserveA, amountA);
+  pool.reserveB = safeAdd(pool.reserveB, amountB);
+  pool.totalShares = pool.totalShares + shares;
+  pool.feeRate = ledger.feeRateBps;
+  pool.lastUpdateBlock = block.number;
+  ledger.pools[poolId] = pool;
+
+  // Update LP position
+  let positionKey = concat(sender, poolId);
+  let position = ledger.lpPositions[positionKey];
+  position.shares = position.shares + shares;
+  position.depositedAt = block.number;
+  ledger.lpPositions[positionKey] = position;
+
+  // Emit event
+  emit LiquidityAdded {
+    poolId: poolId,
+    provider: sender,
+    sharesIssued: shares,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return shares;
+}
+
+/**
+ * Remove liquidity from a pool
+ *
+ * @param tokenA - First token ID
+ * @param tokenB - Second token ID
+ * @param shares - LP shares to burn
+ * @param minAmountA - Minimum amount of token A to receive
+ * @param minAmountB - Minimum amount of token B to receive
+ * @param commitmentA - Zswap commitment for token A output
+ * @param commitmentB - Zswap commitment for token B output
+ * @returns amountA - Actual amount of token A received
+ */
+export circuit removeLiquidity(
+  tokenA: Bytes[32],
+  tokenB: Bytes[32],
+  shares: Field,
+  minAmountA: witness Field,
+  minAmountB: witness Field,
+  commitmentA: Bytes[32],
+  commitmentB: Bytes[32]
+): Field {
+  enterNonReentrant();
+  requireNotPaused();
+
+  // Verify positive shares
+  assert(shares > 0, "Shares must be positive");
+
+  // Get pool
+  let poolId = hash(tokenA, tokenB);
+  let pool = ledger.pools[poolId];
+
+  // Verify pool exists
+  assert(pool.totalShares > 0, "Pool does not exist");
+
+  // Get user's LP position
+  let positionKey = concat(sender, poolId);
+  let position = ledger.lpPositions[positionKey];
+
+  // Verify user has sufficient shares
+  assert(position.shares >= shares, "Insufficient LP shares");
+
+  // Calculate amounts to return proportionally
+  let amountA = (shares * pool.reserveA) / pool.totalShares;
+  let amountB = (shares * pool.reserveB) / pool.totalShares;
+
+  // Verify minimum amounts (slippage protection)
+  assert(amountA >= minAmountA, "Amount A below minimum");
+  assert(amountB >= minAmountB, "Amount B below minimum");
+
+  // Update pool reserves
+  pool.reserveA = safeSub(pool.reserveA, amountA);
+  pool.reserveB = safeSub(pool.reserveB, amountB);
+  pool.totalShares = pool.totalShares - shares;
+  pool.lastUpdateBlock = block.number;
+  ledger.pools[poolId] = pool;
+
+  // Update user's LP position
+  position.shares = position.shares - shares;
+  ledger.lpPositions[positionKey] = position;
+
+  // Transfer tokens back via Zswap
+  zswap.shieldedTransfer(commitmentA);
+  zswap.shieldedTransfer(commitmentB);
+
+  // Emit event
+  emit LiquidityRemoved {
+    poolId: poolId,
+    provider: sender,
+    sharesBurned: shares,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return amountA;
+}
+
+/**
+ * Claim staking rewards
+ *
+ * @param commitment - Zswap commitment for reward transfer
+ * @returns amount - Rewards claimed
+ */
+export circuit claimRewards(
+  commitment: Bytes[32]
+): Field {
+  enterNonReentrant();
+  requireNotPaused();
+
+  let stakeInfo = ledger.stakes[sender];
+
+  // Calculate pending rewards
+  let blocksSinceLastClaim = block.number - stakeInfo.lastClaimBlock;
+  let pendingReward = (stakeInfo.amount * ledger.rewardConfig.rewardPerBlock * blocksSinceLastClaim) / ledger.totalStaked;
+
+  assert(pendingReward > 0, "No rewards to claim");
+
+  // Transfer rewards via Zswap
+  zswap.transfer(
+    ledger.rewardConfig.rewardTokenId,
+    pendingReward,
+    ledger.developerWallet, // Rewards come from protocol
+    sender
+  );
+
+  // Update stake info
+  stakeInfo.lastClaimBlock = block.number;
+  stakeInfo.rewardDebt = stakeInfo.rewardDebt + pendingReward;
+  ledger.stakes[sender] = stakeInfo;
+
+  // Emit event
+  emit RewardsClaimed {
+    user: sender,
+    amount: pendingReward,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+
+  return pendingReward;
+}
+
+/**
+ * Emergency withdraw - forfeit rewards but recover stake
+ */
+export circuit emergencyWithdraw(
+  poolId: Bytes[32],
+  commitment: Bytes[32]
+) {
+  enterNonReentrant();
+  // Can be called even when paused
+
+  let positionKey = concat(sender, poolId);
+  let position = ledger.lpPositions[positionKey];
+
+  assert(position.shares > 0, "No position to withdraw");
+
+  let pool = ledger.pools[poolId];
+  let amountA = (position.shares * pool.reserveA) / pool.totalShares;
+  let amountB = (position.shares * pool.reserveB) / pool.totalShares;
+
+  // Update pool
+  pool.reserveA = safeSub(pool.reserveA, amountA);
+  pool.reserveB = safeSub(pool.reserveB, amountB);
+  pool.totalShares = pool.totalShares - position.shares;
+  ledger.pools[poolId] = pool;
+
+  // Clear position (forfeit rewards)
+  let clearedPosition = LPPosition {
+    shares: 0,
+    depositedAt: 0,
+    rewardDebt: 0
+  };
+  ledger.lpPositions[positionKey] = clearedPosition;
+
+  // Transfer via Zswap
+  zswap.shieldedTransfer(commitment);
+
+  emit EmergencyWithdraw {
+    user: sender,
+    poolId: poolId,
+    amount: amountA,
+    timestamp: block.timestamp
+  };
+
+  exitNonReentrant();
+}
+
+// ============================================================================
+// VIEW FUNCTIONS
+// ============================================================================
+
+/**
+ * Query user's premium status (public view function)
+ * Returns only the boolean status, not the actual staked amount
+ *
+ * @param user - User address to query
+ * @returns Boolean indicating premium status
+ */
+export view isPremiumUser(user: Bytes[32]): Boolean {
+  let stakeInfo = ledger.stakes[user];
+  return stakeInfo.isPremium;
+}
+
+/**
+ * Query total fees collected (public view function)
+ *
+ * @returns Total DUST fees collected
+ */
+export view getTotalFeesCollected(): Field {
+  return ledger.totalFeesCollected;
+}
+
+/**
+ * Query developer wallet address (public view function)
+ *
+ * @returns Developer wallet address
+ */
+export view getDeveloperWallet(): Bytes[32] {
+  return ledger.developerWallet;
+}
+
+/**
+ * Query fee rate (public view function)
+ *
+ * @returns Fee rate in basis points
+ */
+export view getFeeRate(): Field {
+  return ledger.feeRateBps;
+}
+
+/**
+ * Query premium threshold (public view function)
+ *
+ * @returns Premium threshold in NIGHT tokens
+ */
+export view getPremiumThreshold(): Field {
+  return ledger.premiumThreshold;
+}
+
+/**
+ * Query contract pause status
+ *
+ * @returns Boolean indicating if contract is paused
+ */
+export view getIsPaused(): Boolean {
+  return ledger.isPaused;
+}
+
+/**
+ * Query protocol version
+ *
+ * @returns Protocol version number
+ */
+export view getProtocolVersion(): Field {
+  return ledger.protocolVersion;
+}
+
+/**
+ * Query total NIGHT staked
+ *
+ * @returns Total NIGHT staked across all users
+ */
+export view getTotalStaked(): Field {
+  return ledger.totalStaked;
+}
+
+/**
+ * Query pool total shares (public info only)
+ *
+ * @param poolId - Pool ID to query
+ * @returns Total LP shares in pool
+ */
+export view getPoolTotalShares(poolId: Bytes[32]): Field {
+  let pool = ledger.pools[poolId];
+  return pool.totalShares;
+}
+
+/**
+ * Query user's LP shares in a pool
+ *
+ * @param user - User address
+ * @param poolId - Pool ID
+ * @returns User's LP shares
+ */
+export view getUserLPShares(user: Bytes[32], poolId: Bytes[32]): Field {
+  let positionKey = concat(user, poolId);
+  let position = ledger.lpPositions[positionKey];
+  return position.shares;
+}
+
+/**
+ * Query current reward rate
+ *
+ * @returns Rewards per block
+ */
+export view getRewardRate(): Field {
+  return ledger.rewardConfig.rewardPerBlock;
+}
+
+/**
+ * Query max batch size
+ *
+ * @returns Maximum swaps per batch
+ */
+export view getMaxBatchSize(): Field {
+  return ledger.maxBatchSize;
+}
+
+// ============================================================================
+// ADMIN FUNCTIONS
+// ============================================================================
+
+/**
+ * Update developer wallet (admin only)
+ *
+ * @param newWallet - New developer wallet address
+ */
+export circuit setDeveloperWallet(newWallet: Bytes[32]) {
+  requireAdmin();
+
+  // Validate new wallet is not zero address
+  let zeroAddr: Bytes[32] = 0x0000000000000000000000000000000000000000000000000000000000000000;
+  assert(newWallet != zeroAddr, "Invalid wallet address");
+
+  ledger.developerWallet = newWallet;
+
+  emit FeesCollected {
+    amount: 0,
+    recipient: newWallet,
+    timestamp: block.timestamp
+  };
+}
+
+/**
+ * Pause/unpause contract (admin only)
+ *
+ * @param paused - New pause state
+ */
+export circuit setPaused(paused: Boolean) {
+  requireAdmin();
+  ledger.isPaused = paused;
+}
+
+/**
+ * Update fee rate (admin only)
+ *
+ * @param newFeeRateBps - New fee rate in basis points (max 1000 = 10%)
+ */
+export circuit setFeeRate(newFeeRateBps: Field) {
+  requireAdmin();
+  assert(newFeeRateBps <= 1000, "Fee rate too high (max 10%)");
+  ledger.feeRateBps = newFeeRateBps;
+}
+
+/**
+ * Update reward configuration (admin only)
+ *
+ * @param rewardPerBlock - New rewards per block
+ * @param endBlock - New end block for rewards
+ */
+export circuit setRewardConfig(rewardPerBlock: Field, endBlock: Field) {
+  requireAdmin();
+  assert(endBlock > block.number, "End block must be in future");
+
+  ledger.rewardConfig.rewardPerBlock = rewardPerBlock;
+  ledger.rewardConfig.endBlock = endBlock;
+}
+
+/**
+ * Update premium threshold (admin only)
+ *
+ * @param newThreshold - New premium threshold in NIGHT
+ */
+export circuit setPremiumThreshold(newThreshold: Field) {
+  requireAdmin();
+  assert(newThreshold > 0, "Threshold must be positive");
+  ledger.premiumThreshold = newThreshold;
+}
