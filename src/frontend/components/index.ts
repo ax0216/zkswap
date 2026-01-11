@@ -4,12 +4,19 @@
  * Export all React components for the ZKSwap Vault DApp.
  */
 
-// Components
-export { WalletConnect, walletConnectStyles } from './WalletConnect';
-export { SwapForm, swapFormStyles } from './SwapForm';
-export { StakePanel, stakePanelStyles } from './StakePanel';
-export { LiquidityPanel, liquidityPanelStyles } from './LiquidityPanel';
-export { PoolStats, poolStatsStyles } from './PoolStats';
+// Import components and styles
+import { WalletConnect, walletConnectStyles } from './WalletConnect';
+import { SwapForm, swapFormStyles } from './SwapForm';
+import { StakePanel, stakePanelStyles } from './StakePanel';
+import { LiquidityPanel, liquidityPanelStyles } from './LiquidityPanel';
+import { PoolStats, poolStatsStyles } from './PoolStats';
+
+// Re-export components
+export { WalletConnect, walletConnectStyles };
+export { SwapForm, swapFormStyles };
+export { StakePanel, stakePanelStyles };
+export { LiquidityPanel, liquidityPanelStyles };
+export { PoolStats, poolStatsStyles };
 
 // Combined styles export for easy injection
 export const allStyles = `

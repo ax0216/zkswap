@@ -47,6 +47,24 @@ import { ZKProofGenerator } from '../proofs/ZKProofGenerator';
 import { ZswapIntegration } from '../utils/ZswapIntegration';
 
 // ============================================================================
+// JSON-RPC TYPES
+// ============================================================================
+
+/**
+ * JSON-RPC response structure
+ */
+interface JsonRpcResponse<T = unknown> {
+  jsonrpc: string;
+  id: number;
+  result?: T;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -346,7 +364,7 @@ export class ZKSwapClient {
 
   // Event listeners
   private eventListeners: Map<string, Set<(event: ZKSwapEvent) => void>> = new Map();
-  private eventPollingInterval: NodeJS.Timer | null = null;
+  private eventPollingInterval: ReturnType<typeof setInterval> | null = null;
   private lastProcessedBlock = 0;
 
   constructor(config: ZKSwapClientConfig) {
@@ -948,7 +966,7 @@ export class ZKSwapClient {
         }),
       });
 
-      const result = await response.json();
+      const result = await response.json() as JsonRpcResponse<string>;
       return BigInt(result.result || '0x1');
     } catch {
       return 1n; // Default gas price
@@ -1299,8 +1317,8 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
-    return parseInt(result.result, 16);
+    const result = await response.json() as JsonRpcResponse<string>;
+    return parseInt(result.result || '0x0', 16);
   }
 
   private async sendTransaction(
@@ -1328,11 +1346,11 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as JsonRpcResponse<string>;
     if (result.error) {
       throw new ZKSwapError(ZKSwapErrorCode.NETWORK_ERROR, result.error.message);
     }
-    return { hash: result.result as Bytes32 };
+    return { hash: (result.result || '0x') as Bytes32 };
   }
 
   private async waitForTransaction(
@@ -1354,7 +1372,10 @@ export class ZKSwapClient {
         }),
       });
 
-      const result = await response.json();
+      const result = await response.json() as JsonRpcResponse<{
+        blockNumber: string;
+        logs: unknown[];
+      } | null>;
 
       if (result.result) {
         return {
@@ -1388,7 +1409,7 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as JsonRpcResponse<string>;
     return result.result || '0x';
   }
 
@@ -1410,8 +1431,8 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
-    return parseInt(result.result, 16);
+    const result = await response.json() as JsonRpcResponse<string>;
+    return parseInt(result.result || '0x0', 16);
   }
 
   private async queryLogs(eventType: string, fromBlock: number, toBlock?: number): Promise<unknown[]> {
@@ -1433,7 +1454,7 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as JsonRpcResponse<unknown[]>;
     return result.result || [];
   }
 
