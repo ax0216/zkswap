@@ -559,7 +559,7 @@ export class ZswapIntegration {
 
     return (response.result || []).map(evt => ({
       commitment: evt.commitment as Bytes32,
-      encryptedNote: this.hexToBytes(evt.encryptedNote),
+      encryptedNote: this.hexToBytes(evt.encryptedNote as Bytes32),
     }));
   }
 

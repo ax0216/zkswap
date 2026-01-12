@@ -390,7 +390,19 @@ export function useZKSwap(config: UseZKSwapConfig = {}): UseZKSwapReturn {
   // Get pool info
   const getPoolInfo = useCallback(async (tokenA: string, tokenB: string): Promise<PoolInfo | null> => {
     if (!client) return null;
-    return client.getPoolInfo(tokenA as Bytes32, tokenB as Bytes32);
+    const publicInfo = await client.getPoolInfo(tokenA as Bytes32, tokenB as Bytes32);
+    if (!publicInfo) return null;
+
+    // Convert PublicPoolInfo to PoolInfo with reserve estimates
+    return {
+      poolId: publicInfo.poolId,
+      tokenA: publicInfo.tokenA.tokenId,
+      tokenB: publicInfo.tokenB.tokenId,
+      reserveA: 0n, // Would need to query actual reserves
+      reserveB: 0n,
+      totalShares: publicInfo.totalShares,
+      feeRate: publicInfo.feeRate,
+    };
   }, [client]);
 
   // Get all pools

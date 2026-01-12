@@ -256,9 +256,15 @@ export interface PublicPoolInfo {
  * Add liquidity input parameters
  */
 export interface AddLiquidityInput {
-  tokenA: Bytes32;
-  tokenB: Bytes32;
+  /** Pool identifier (alternative to specifying tokenA/tokenB) */
+  poolId?: Bytes32 | string;
+  /** Token A address */
+  tokenA?: Bytes32;
+  /** Token B address */
+  tokenB?: Bytes32;
+  /** Amount of token A to add */
   amountA: bigint;
+  /** Amount of token B to add */
   amountB: bigint;
 }
 
@@ -280,8 +286,8 @@ export interface AddLiquidityResult {
  * Remove liquidity input parameters
  */
 export interface RemoveLiquidityInput {
-  /** Pool identifier */
-  poolId?: Bytes32;
+  /** Pool identifier (alternative to specifying tokenA/tokenB) */
+  poolId?: Bytes32 | string;
   /** Token A address */
   tokenA?: Bytes32;
   /** Token B address */
