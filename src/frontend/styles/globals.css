@@ -1,6 +1,28 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* ============================================================================
+   ZKSwap Vault - Tailwind v4 Theme Configuration
+   ============================================================================ */
+
+@theme {
+  --color-midnight-50: #f0f0ff;
+  --color-midnight-100: #e0e1ff;
+  --color-midnight-200: #c7c8fe;
+  --color-midnight-300: #a5a6fc;
+  --color-midnight-400: #8183f9;
+  --color-midnight-500: #6366f1;
+  --color-midnight-600: #4f46e5;
+  --color-midnight-700: #4338ca;
+  --color-midnight-800: #3730a3;
+  --color-midnight-900: #312e81;
+  --color-midnight-950: #0f0f23;
+
+  --color-neon-purple: #a855f7;
+  --color-neon-blue: #3b82f6;
+  --color-neon-cyan: #06b6d4;
+  --color-neon-green: #10b981;
+  --color-neon-pink: #ec4899;
+}
 
 /* ============================================================================
    ZKSwap Vault - Premium Global Styles
@@ -8,12 +30,6 @@
 
 @layer base {
   :root {
-    --midnight-950: #0f0f23;
-    --midnight-900: #1a1a3e;
-    --midnight-800: #252550;
-    --neon-purple: #a855f7;
-    --neon-blue: #3b82f6;
-    --neon-cyan: #06b6d4;
     --glow-primary: rgba(99, 102, 241, 0.4);
     --glow-secondary: rgba(139, 92, 246, 0.4);
   }
