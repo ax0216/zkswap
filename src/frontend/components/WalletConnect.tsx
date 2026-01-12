@@ -53,10 +53,24 @@ export function WalletConnect({
 
   // Render error state
   if (error) {
+    const showLaceLink = error.includes('lace.io') || error.includes('Cardano wallet');
+
     return (
       <div className={`zkswap-wallet-error ${className}`}>
         <div className="error-icon">!</div>
-        <span className="error-message">{error}</span>
+        <div className="error-content">
+          <span className="error-message">{error}</span>
+          {showLaceLink && (
+            <a
+              href="https://lace.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="wallet-link"
+            >
+              Get Lace Wallet →
+            </a>
+          )}
+        </div>
         <button onClick={connect} className="retry-button">
           Retry
         </button>
@@ -271,12 +285,13 @@ export const walletConnectStyles = `
 
   .zkswap-wallet-error {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     padding: 12px 16px;
     border-radius: 12px;
     background: #7f1d1d;
     color: #fca5a5;
+    max-width: 100%;
   }
 
   .zkswap-wallet-error .error-icon {
@@ -290,11 +305,37 @@ export const walletConnectStyles = `
     justify-content: center;
     font-weight: bold;
     font-size: 12px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .zkswap-wallet-error .error-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
   }
 
   .zkswap-wallet-error .error-message {
-    flex: 1;
     font-size: 14px;
+    line-height: 1.4;
+    word-wrap: break-word;
+  }
+
+  .zkswap-wallet-error .wallet-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #fbbf24;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: underline;
+    transition: color 0.2s ease;
+  }
+
+  .zkswap-wallet-error .wallet-link:hover {
+    color: #fcd34d;
   }
 
   .zkswap-wallet-error .retry-button {
@@ -305,6 +346,9 @@ export const walletConnectStyles = `
     color: #fca5a5;
     font-size: 12px;
     cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 2px;
   }
 
   .zkswap-wallet-error .retry-button:hover {

@@ -74,30 +74,72 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
     setState(prev => ({ ...prev, isConnecting: true, error: null }));
 
     try {
-      // Check if Midnight wallet extension is available
-      const midnight = (window as any).midnight;
-      if (!midnight) {
-        throw new Error('Midnight wallet not found. Please install the Midnight browser extension.');
+      // Check for Cardano wallets (Lace, Eternl, etc.)
+      const windowObj = window as any;
+      const lace = windowObj.lace;
+      const eternl = windowObj.eternl;
+      const cardano = windowObj.cardano;
+
+      // Try Lace first (preferred for Midnight)
+      let walletApi = null;
+      let walletName = '';
+
+      if (lace) {
+        walletApi = lace;
+        walletName = 'Lace';
+      } else if (eternl) {
+        walletApi = eternl;
+        walletName = 'Eternl';
+      } else if (cardano) {
+        // Try generic Cardano wallets
+        const availableWallets = Object.keys(cardano);
+        if (availableWallets.length > 0) {
+          walletApi = cardano[availableWallets[0]];
+          walletName = availableWallets[0];
+        }
       }
 
-      // Request wallet connection
-      const accounts = await midnight.request({ method: 'midnight_requestAccounts' });
-      if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts found. Please create an account in your Midnight wallet.');
+      if (!walletApi) {
+        throw new Error(
+          'No Cardano wallet detected. Please install Lace wallet and enable the Midnight Testnet profile. Get Lace at: https://lace.io'
+        );
       }
 
-      const address = accounts[0];
+      // Enable wallet API
+      const api = await walletApi.enable();
 
-      // Create wallet provider
-      const provider = midnight.provider as MidnightWalletProvider;
+      if (!api) {
+        throw new Error(`Failed to enable ${walletName} wallet. Please try again.`);
+      }
 
-      // Get initial balance
-      const balance = await fetchBalance(provider, address);
+      // Get wallet addresses
+      const addresses = await api.getUsedAddresses();
+      if (!addresses || addresses.length === 0) {
+        throw new Error(
+          `No addresses found in ${walletName}. Make sure your Midnight Testnet profile is active in wallet settings.`
+        );
+      }
+
+      const address = addresses[0];
+
+      // Create mock provider for now (until Midnight API is fully available)
+      const provider = {
+        getBalance: async (addr: string, tokenId: string) => '0',
+        signTransaction: async (tx: unknown) => tx,
+        signMessage: async (message: string, addr: string) => '',
+      } as MidnightWalletProvider;
+
+      // Mock balance for demo (replace with actual Midnight API calls when available)
+      const balance = {
+        night: 0n,
+        dust: 0n,
+        other: new Map(),
+      };
 
       setState({
         isConnected: true,
         isConnecting: false,
-        address,
+        address: address.toString(),
         balance,
         provider,
         error: null,
@@ -146,13 +188,21 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
       throw new Error('Wallet not connected');
     }
 
-    const midnight = (window as any).midnight;
-    const signature = await midnight.request({
-      method: 'midnight_signMessage',
-      params: [message, state.address],
-    });
+    try {
+      const windowObj = window as any;
+      const lace = windowObj.lace;
 
-    return signature;
+      if (!lace) {
+        throw new Error('Wallet not available');
+      }
+
+      const api = await lace.enable();
+      const signature = await api.signData(state.address, Buffer.from(message).toString('hex'));
+
+      return signature.signature;
+    } catch (error) {
+      throw new Error('Failed to sign message: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   }, [state.provider, state.address]);
 
   // Auto-connect on mount if previously connected
@@ -165,25 +215,27 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
     }
   }, [autoConnect, connect]);
 
-  // Listen for account changes
+  // Listen for account changes (Cardano wallet events)
   useEffect(() => {
-    const midnight = (window as any).midnight;
-    if (!midnight) return;
+    const windowObj = window as any;
+    const lace = windowObj.lace;
 
-    const handleAccountsChanged = (accounts: string[]) => {
-      if (accounts.length === 0) {
-        disconnect();
-      } else if (accounts[0] !== state.address) {
-        connect();
-      }
+    if (!lace || !state.isConnected) return;
+
+    const handleAccountsChanged = () => {
+      // Reconnect when account changes
+      connect();
     };
 
-    midnight.on?.('accountsChanged', handleAccountsChanged);
+    // Listen for wallet events if available
+    if (lace.on) {
+      lace.on('accountChange', handleAccountsChanged);
 
-    return () => {
-      midnight.removeListener?.('accountsChanged', handleAccountsChanged);
-    };
-  }, [state.address, connect, disconnect]);
+      return () => {
+        lace.off?.('accountChange', handleAccountsChanged);
+      };
+    }
+  }, [state.isConnected, state.address, connect]);
 
   // Check if user has premium status (>100 NIGHT staked)
   const isPremium = state.balance ? state.balance.night >= 100_000_000_000n : false;
