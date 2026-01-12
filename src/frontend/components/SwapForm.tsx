@@ -5,9 +5,10 @@
  * Supports single swaps and premium batch swaps.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, ChangeEvent } from 'react';
 import { useWallet } from '../context/WalletContext';
 import { useZKSwap } from '../hooks/useZKSwap';
+import type { Bytes32 } from '../../types';
 
 // ============================================================================
 // Types
@@ -16,7 +17,7 @@ import { useZKSwap } from '../hooks/useZKSwap';
 interface Token {
   symbol: string;
   name: string;
-  address: string;
+  address: Bytes32;
   decimals: number;
   icon?: string;
 }
@@ -31,10 +32,10 @@ interface SwapFormProps {
 // ============================================================================
 
 const SUPPORTED_TOKENS: Token[] = [
-  { symbol: 'NIGHT', name: 'Midnight Token', address: '0x01', decimals: 9 },
-  { symbol: 'DUST', name: 'Dust Token', address: '0x02', decimals: 9 },
-  { symbol: 'USDC', name: 'USD Coin', address: '0x03', decimals: 6 },
-  { symbol: 'ETH', name: 'Wrapped Ether', address: '0x04', decimals: 18 },
+  { symbol: 'NIGHT', name: 'Midnight Token', address: '0x0000000000000000000000000000000000000000000000000000000000000001' as Bytes32, decimals: 9 },
+  { symbol: 'DUST', name: 'Dust Token', address: '0x0000000000000000000000000000000000000000000000000000000000000002' as Bytes32, decimals: 9 },
+  { symbol: 'USDC', name: 'USD Coin', address: '0x0000000000000000000000000000000000000000000000000000000000000003' as Bytes32, decimals: 6 },
+  { symbol: 'ETH', name: 'Wrapped Ether', address: '0x0000000000000000000000000000000000000000000000000000000000000004' as Bytes32, decimals: 18 },
 ];
 
 // ============================================================================
@@ -46,7 +47,8 @@ export function SwapForm({
   onSwapComplete,
 }: SwapFormProps): JSX.Element {
   const { isConnected, isPremium } = useWallet();
-  const { swap, batchSwap, getQuote, isLoading, error } = useZKSwap();
+  const zkSwap = useZKSwap();
+  const { swap, batchSwap, getQuote, isSwapping, error } = zkSwap;
 
   // Form state
   const [fromToken, setFromToken] = useState<Token>(SUPPORTED_TOKENS[0]);
@@ -66,11 +68,6 @@ export function SwapForm({
 
   // Batch swap state (premium only)
   const [isBatchMode, setIsBatchMode] = useState(false);
-  const [batchSwaps, setBatchSwaps] = useState<Array<{
-    fromToken: Token;
-    toToken: Token;
-    amount: string;
-  }>>([]);
 
   // Fetch quote when input changes
   useEffect(() => {
@@ -98,11 +95,19 @@ export function SwapForm({
       }
     };
 
-    const debounce = setTimeout(fetchQuote, 300);
+    const debounce = setTimeout(fetchQuote, 500);
     return () => clearTimeout(debounce);
-  }, [fromToken, toToken, fromAmount, getQuote]);
+  }, [fromAmount, fromToken.address, toToken.address, getQuote]);
 
-  // Swap token positions
+  // Parse amount to bigint
+  const parseAmount = useCallback((amount: string, decimals: number): bigint => {
+    if (!amount) return 0n;
+    const [whole, fraction = ''] = amount.split('.');
+    const paddedFraction = fraction.padEnd(decimals, '0').slice(0, decimals);
+    return BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt(paddedFraction);
+  }, []);
+
+  // Swap tokens position
   const handleSwapTokens = useCallback(() => {
     setFromToken(toToken);
     setToToken(fromToken);
@@ -110,80 +115,110 @@ export function SwapForm({
     setToAmount(fromAmount);
   }, [fromToken, toToken, fromAmount, toAmount]);
 
-  // Execute swap
-  const handleSwap = async () => {
-    if (!fromAmount || parseFloat(fromAmount) <= 0) return;
+  // Execute single swap
+  const handleSwap = useCallback(async () => {
+    if (!fromAmount || !toAmount) return;
 
     try {
-      const minOutput = (
-        parseFloat(toAmount) * (1 - slippage / 100)
-      ).toString();
+      const minOutput = parseAmount(toAmount, toToken.decimals);
+      const slippageAmount = minOutput * BigInt(Math.floor(slippage * 100)) / 10000n;
+      const minOutputWithSlippage = minOutput - slippageAmount;
 
-      const txHash = await swap({
-        fromToken: fromToken.address,
-        toToken: toToken.address,
-        amount: fromAmount,
-        minOutput,
+      const result = await swap({
+        inputTokenId: fromToken.address,
+        inputAmount: parseAmount(fromAmount, fromToken.decimals),
+        outputTokenId: toToken.address,
+        minOutputAmount: minOutputWithSlippage,
+        deadlineBlocks: 100,
       });
 
-      onSwapComplete?.(txHash);
+      onSwapComplete?.(result.txHash);
       setFromAmount('');
       setToAmount('');
       setQuote(null);
     } catch (err) {
       console.error('Swap failed:', err);
     }
-  };
+  }, [fromAmount, toAmount, fromToken, toToken, slippage, parseAmount, swap, onSwapComplete]);
 
-  // Execute batch swap (premium only)
-  const handleBatchSwap = async () => {
-    if (batchSwaps.length === 0) return;
+  // Execute batch swap
+  const handleBatchSwap = useCallback(async () => {
+    if (!fromAmount || !toAmount) return;
 
     try {
-      const txHash = await batchSwap(
-        batchSwaps.map(s => ({
-          fromToken: s.fromToken.address,
-          toToken: s.toToken.address,
-          amount: s.amount,
-          minOutput: '0', // Would calculate in production
-        }))
-      );
+      const minOutput = parseAmount(toAmount, toToken.decimals);
+      const slippageAmount = minOutput * BigInt(Math.floor(slippage * 100)) / 10000n;
+      const minOutputWithSlippage = minOutput - slippageAmount;
 
-      onSwapComplete?.(txHash);
-      setBatchSwaps([]);
+      const result = await batchSwap({
+        orders: [{
+          inputTokenId: fromToken.address,
+          inputAmount: parseAmount(fromAmount, fromToken.decimals),
+          outputTokenId: toToken.address,
+          minOutputAmount: minOutputWithSlippage,
+          deadlineBlocks: 100,
+        }],
+      });
+
+      onSwapComplete?.(result.txHash);
+      setFromAmount('');
+      setToAmount('');
+      setQuote(null);
     } catch (err) {
       console.error('Batch swap failed:', err);
     }
-  };
+  }, [fromAmount, toAmount, fromToken, toToken, slippage, parseAmount, batchSwap, onSwapComplete]);
 
-  // Add swap to batch
-  const addToBatch = () => {
-    if (!fromAmount || batchSwaps.length >= 5) return;
+  // Handle input changes
+  const handleFromAmountChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setFromAmount(e.target.value);
+  }, []);
 
-    setBatchSwaps([
-      ...batchSwaps,
-      { fromToken, toToken, amount: fromAmount },
-    ]);
-    setFromAmount('');
-  };
+  const handleFromTokenChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
+    const token = SUPPORTED_TOKENS.find(t => t.address === e.target.value);
+    if (token && token.address !== toToken.address) {
+      setFromToken(token);
+    }
+  }, [toToken.address]);
 
-  // Remove from batch
-  const removeFromBatch = (index: number) => {
-    setBatchSwaps(batchSwaps.filter((_, i) => i !== index));
-  };
+  const handleToTokenChange = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
+    const token = SUPPORTED_TOKENS.find(t => t.address === e.target.value);
+    if (token && token.address !== fromToken.address) {
+      setToToken(token);
+    }
+  }, [fromToken.address]);
+
+  const handleSlippageChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setSlippage(parseFloat(e.target.value) || 0.5);
+  }, []);
+
+  // Not connected state
+  if (!isConnected) {
+    return (
+      <div className={`zkswap-swap-form ${className}`}>
+        <div className="form-header">
+          <h2>Swap</h2>
+        </div>
+        <div className="connect-prompt">
+          <p>Connect your wallet to start swapping</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`zkswap-swap-form ${className}`}>
       {/* Header */}
-      <div className="swap-header">
+      <div className="form-header">
         <h2>Swap</h2>
         <div className="header-actions">
           {isPremium && (
             <button
               className={`batch-toggle ${isBatchMode ? 'active' : ''}`}
               onClick={() => setIsBatchMode(!isBatchMode)}
+              title="Batch Mode (Premium)"
             >
-              Batch Mode
+              ⚡
             </button>
           )}
           <button
@@ -198,8 +233,8 @@ export function SwapForm({
       {/* Settings Panel */}
       {showSettings && (
         <div className="settings-panel">
-          <div className="slippage-setting">
-            <label>Slippage Tolerance</label>
+          <label>
+            Slippage Tolerance
             <div className="slippage-options">
               {[0.1, 0.5, 1.0].map(value => (
                 <button
@@ -213,156 +248,105 @@ export function SwapForm({
               <input
                 type="number"
                 value={slippage}
-                onChange={e => setSlippage(parseFloat(e.target.value) || 0.5)}
-                min="0.1"
-                max="50"
-                step="0.1"
+                onChange={handleSlippageChange}
+                placeholder="Custom"
               />
             </div>
-          </div>
+          </label>
         </div>
       )}
 
       {/* From Token Input */}
       <div className="token-input">
-        <label>From</label>
+        <div className="input-header">
+          <span>From</span>
+          <span className="balance">Balance: --</span>
+        </div>
         <div className="input-row">
-          <select
-            value={fromToken.symbol}
-            onChange={e => {
-              const token = SUPPORTED_TOKENS.find(t => t.symbol === e.target.value);
-              if (token) setFromToken(token);
-            }}
-          >
-            {SUPPORTED_TOKENS.map(token => (
-              <option key={token.symbol} value={token.symbol}>
-                {token.symbol}
-              </option>
-            ))}
-          </select>
           <input
             type="number"
             placeholder="0.0"
             value={fromAmount}
-            onChange={e => setFromAmount(e.target.value)}
-            disabled={!isConnected}
+            onChange={handleFromAmountChange}
           />
+          <select value={fromToken.address} onChange={handleFromTokenChange}>
+            {SUPPORTED_TOKENS.filter(t => t.address !== toToken.address).map(token => (
+              <option key={token.address} value={token.address}>
+                {token.symbol}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
       {/* Swap Direction Button */}
       <button className="swap-direction" onClick={handleSwapTokens}>
-        ↕
+        ↕️
       </button>
 
       {/* To Token Input */}
       <div className="token-input">
-        <label>To</label>
+        <div className="input-header">
+          <span>To</span>
+          <span className="balance">Balance: --</span>
+        </div>
         <div className="input-row">
-          <select
-            value={toToken.symbol}
-            onChange={e => {
-              const token = SUPPORTED_TOKENS.find(t => t.symbol === e.target.value);
-              if (token) setToToken(token);
-            }}
-          >
-            {SUPPORTED_TOKENS.map(token => (
-              <option key={token.symbol} value={token.symbol}>
-                {token.symbol}
-              </option>
-            ))}
-          </select>
           <input
             type="number"
             placeholder="0.0"
             value={toAmount}
             readOnly
-            className={isQuoting ? 'loading' : ''}
           />
+          <select value={toToken.address} onChange={handleToTokenChange}>
+            {SUPPORTED_TOKENS.filter(t => t.address !== fromToken.address).map(token => (
+              <option key={token.address} value={token.address}>
+                {token.symbol}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {/* Quote Details */}
+      {/* Quote Info */}
       {quote && (
-        <div className="quote-details">
-          <div className="quote-row">
+        <div className="swap-info">
+          <div className="info-row">
+            <span>Rate</span>
+            <span>
+              1 {fromToken.symbol} ≈ {(parseFloat(quote.expectedOutput) / parseFloat(fromAmount)).toFixed(4)} {toToken.symbol}
+            </span>
+          </div>
+          <div className="info-row">
+            <span>Fee</span>
+            <span>{quote.fee} {fromToken.symbol}</span>
+          </div>
+          <div className="info-row">
             <span>Price Impact</span>
-            <span className={quote.priceImpact > 5 ? 'warning' : ''}>
+            <span className={quote.priceImpact > 1 ? 'warning' : ''}>
               {quote.priceImpact.toFixed(2)}%
             </span>
           </div>
-          <div className="quote-row">
-            <span>Fee (0.5%)</span>
-            <span>{quote.fee} DUST</span>
-          </div>
-          <div className="quote-row">
-            <span>Min. Received</span>
-            <span>
-              {(parseFloat(toAmount) * (1 - slippage / 100)).toFixed(6)} {toToken.symbol}
-            </span>
-          </div>
         </div>
       )}
 
-      {/* Error Display */}
-      {error && (
-        <div className="error-message">
-          {error}
-        </div>
-      )}
-
-      {/* Action Buttons */}
-      {!isConnected ? (
-        <button className="swap-button disabled">
-          Connect Wallet
-        </button>
-      ) : isBatchMode ? (
-        <div className="batch-actions">
-          <button
-            className="add-to-batch"
-            onClick={addToBatch}
-            disabled={!fromAmount || batchSwaps.length >= 5}
-          >
-            Add to Batch ({batchSwaps.length}/5)
-          </button>
-          <button
-            className="execute-batch"
-            onClick={handleBatchSwap}
-            disabled={batchSwaps.length === 0 || isLoading}
-          >
-            {isLoading ? 'Processing...' : 'Execute Batch'}
-          </button>
-        </div>
-      ) : (
-        <button
-          className="swap-button"
-          onClick={handleSwap}
-          disabled={!fromAmount || isLoading || isQuoting}
-        >
-          {isLoading ? 'Swapping...' : 'Swap'}
-        </button>
-      )}
-
-      {/* Batch Queue (Premium) */}
-      {isBatchMode && batchSwaps.length > 0 && (
-        <div className="batch-queue">
-          <h4>Batch Queue</h4>
-          {batchSwaps.map((swap, index) => (
-            <div key={index} className="batch-item">
-              <span>
-                {swap.amount} {swap.fromToken.symbol} → {swap.toToken.symbol}
-              </span>
-              <button onClick={() => removeFromBatch(index)}>✕</button>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Swap Button */}
+      <button
+        className="swap-button"
+        onClick={isBatchMode ? handleBatchSwap : handleSwap}
+        disabled={!fromAmount || !toAmount || isSwapping || isQuoting}
+      >
+        {isSwapping ? 'Swapping...' : isQuoting ? 'Getting Quote...' : isBatchMode ? 'Batch Swap ⚡' : 'Swap'}
+      </button>
 
       {/* Privacy Notice */}
       <div className="privacy-notice">
-        <span className="shield-icon">🛡️</span>
-        <span>Your swap is protected by zero-knowledge proofs</span>
+        🛡️ Your swap is protected by zero-knowledge proofs
       </div>
+
+      {/* Error */}
+      {error && (
+        <div className="error-message">{error}</div>
+      )}
     </div>
   );
 }
@@ -378,17 +362,16 @@ export const swapFormStyles = `
     border-radius: 16px;
     padding: 24px;
     max-width: 480px;
-    margin: 0 auto;
   }
 
-  .zkswap-swap-form .swap-header {
+  .zkswap-swap-form .form-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
   }
 
-  .zkswap-swap-form .swap-header h2 {
+  .zkswap-swap-form .form-header h2 {
     margin: 0;
     color: #e5e7eb;
     font-size: 20px;
@@ -399,13 +382,13 @@ export const swapFormStyles = `
     gap: 8px;
   }
 
-  .zkswap-swap-form .batch-toggle {
-    padding: 6px 12px;
-    border: 1px solid #6366f1;
+  .zkswap-swap-form .batch-toggle,
+  .zkswap-swap-form .settings-button {
+    padding: 8px;
+    border: none;
     border-radius: 8px;
-    background: transparent;
-    color: #6366f1;
-    font-size: 12px;
+    background: #374151;
+    color: #9ca3af;
     cursor: pointer;
     transition: all 0.2s ease;
   }
@@ -415,15 +398,6 @@ export const swapFormStyles = `
     color: white;
   }
 
-  .zkswap-swap-form .settings-button {
-    padding: 6px 10px;
-    border: 1px solid #374151;
-    border-radius: 8px;
-    background: transparent;
-    font-size: 16px;
-    cursor: pointer;
-  }
-
   .zkswap-swap-form .settings-panel {
     background: #111827;
     border-radius: 12px;
@@ -431,7 +405,7 @@ export const swapFormStyles = `
     margin-bottom: 16px;
   }
 
-  .zkswap-swap-form .slippage-setting label {
+  .zkswap-swap-form .settings-panel label {
     display: block;
     color: #9ca3af;
     font-size: 14px;
@@ -448,14 +422,14 @@ export const swapFormStyles = `
     border: 1px solid #374151;
     border-radius: 8px;
     background: transparent;
-    color: #e5e7eb;
+    color: #9ca3af;
     cursor: pointer;
-    transition: all 0.2s ease;
   }
 
   .zkswap-swap-form .slippage-options button.active {
     background: #6366f1;
     border-color: #6366f1;
+    color: white;
   }
 
   .zkswap-swap-form .slippage-options input {
@@ -468,81 +442,75 @@ export const swapFormStyles = `
     text-align: center;
   }
 
+  .zkswap-swap-form .connect-prompt {
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
+  }
+
   .zkswap-swap-form .token-input {
     background: #111827;
     border: 1px solid #374151;
     border-radius: 12px;
     padding: 16px;
-    margin-bottom: 8px;
   }
 
-  .zkswap-swap-form .token-input label {
-    display: block;
+  .zkswap-swap-form .input-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
     color: #9ca3af;
     font-size: 14px;
-    margin-bottom: 8px;
   }
 
-  .zkswap-swap-form .token-input .input-row {
+  .zkswap-swap-form .input-row {
     display: flex;
     gap: 12px;
   }
 
-  .zkswap-swap-form .token-input select {
-    padding: 12px;
+  .zkswap-swap-form .input-row input {
+    flex: 1;
+    padding: 12px 0;
+    border: none;
+    background: transparent;
+    color: #e5e7eb;
+    font-size: 24px;
+    outline: none;
+  }
+
+  .zkswap-swap-form .input-row select {
+    padding: 8px 12px;
     border: 1px solid #374151;
-    border-radius: 8px;
-    background: #1f2937;
+    border-radius: 12px;
+    background: #374151;
     color: #e5e7eb;
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
   }
 
-  .zkswap-swap-form .token-input input {
-    flex: 1;
-    padding: 12px;
-    border: none;
-    background: transparent;
-    color: #e5e7eb;
-    font-size: 24px;
-    text-align: right;
-    outline: none;
-  }
-
-  .zkswap-swap-form .token-input input.loading {
-    opacity: 0.5;
-  }
-
   .zkswap-swap-form .swap-direction {
     display: block;
-    width: 40px;
-    height: 40px;
-    margin: -16px auto;
+    margin: -8px auto;
+    padding: 8px;
     border: 4px solid #1f2937;
     border-radius: 12px;
     background: #374151;
-    color: #e5e7eb;
-    font-size: 18px;
+    color: #9ca3af;
+    font-size: 16px;
     cursor: pointer;
-    z-index: 1;
     position: relative;
-    transition: all 0.2s ease;
+    z-index: 1;
   }
 
-  .zkswap-swap-form .swap-direction:hover {
-    background: #4b5563;
-    transform: rotate(180deg);
-  }
-
-  .zkswap-swap-form .quote-details {
+  .zkswap-swap-form .swap-info {
     background: #111827;
     border-radius: 12px;
     padding: 12px 16px;
-    margin: 16px 0;
+    margin-top: 16px;
   }
 
-  .zkswap-swap-form .quote-row {
+  .zkswap-swap-form .info-row {
     display: flex;
     justify-content: space-between;
     padding: 4px 0;
@@ -550,8 +518,38 @@ export const swapFormStyles = `
     font-size: 14px;
   }
 
-  .zkswap-swap-form .quote-row .warning {
-    color: #fbbf24;
+  .zkswap-swap-form .info-row .warning {
+    color: #f59e0b;
+  }
+
+  .zkswap-swap-form .swap-button {
+    width: 100%;
+    margin-top: 16px;
+    padding: 16px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .zkswap-swap-form .swap-button:disabled {
+    background: #374151;
+    color: #6b7280;
+    cursor: not-allowed;
+  }
+
+  .zkswap-swap-form .privacy-notice {
+    text-align: center;
+    margin-top: 16px;
+    padding: 12px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: 8px;
+    color: #9ca3af;
+    font-size: 13px;
   }
 
   .zkswap-swap-form .error-message {
@@ -559,107 +557,9 @@ export const swapFormStyles = `
     color: #fca5a5;
     padding: 12px;
     border-radius: 8px;
-    margin: 16px 0;
-    font-size: 14px;
-  }
-
-  .zkswap-swap-form .swap-button {
-    width: 100%;
-    padding: 16px;
-    border: none;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-    color: white;
-    font-size: 18px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .zkswap-swap-form .swap-button:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-  }
-
-  .zkswap-swap-form .swap-button:disabled,
-  .zkswap-swap-form .swap-button.disabled {
-    background: #374151;
-    color: #6b7280;
-    cursor: not-allowed;
-  }
-
-  .zkswap-swap-form .batch-actions {
-    display: flex;
-    gap: 12px;
-  }
-
-  .zkswap-swap-form .batch-actions button {
-    flex: 1;
-    padding: 14px;
-    border: none;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .zkswap-swap-form .add-to-batch {
-    background: #374151;
-    color: #e5e7eb;
-  }
-
-  .zkswap-swap-form .execute-batch {
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-    color: white;
-  }
-
-  .zkswap-swap-form .batch-queue {
     margin-top: 16px;
-    padding: 16px;
-    background: #111827;
-    border-radius: 12px;
-  }
-
-  .zkswap-swap-form .batch-queue h4 {
-    margin: 0 0 12px 0;
-    color: #9ca3af;
     font-size: 14px;
-  }
-
-  .zkswap-swap-form .batch-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px solid #374151;
-    color: #e5e7eb;
-    font-size: 14px;
-  }
-
-  .zkswap-swap-form .batch-item:last-child {
-    border-bottom: none;
-  }
-
-  .zkswap-swap-form .batch-item button {
-    padding: 4px 8px;
-    border: none;
-    background: transparent;
-    color: #ef4444;
-    cursor: pointer;
-  }
-
-  .zkswap-swap-form .privacy-notice {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 16px;
-    padding: 12px;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.2);
-    border-radius: 8px;
-    color: #10b981;
-    font-size: 13px;
+    text-align: center;
   }
 `;
 

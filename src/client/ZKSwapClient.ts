@@ -29,10 +29,16 @@ import {
   StakeInput,
   StakeResult,
   UnstakeInput,
+  UnstakeResult,
   AddLiquidityInput,
   AddLiquidityResult,
+  RemoveLiquidityInput,
+  RemoveLiquidityResult,
+  ClaimRewardsResult,
   PublicStakeInfo,
   PublicPoolInfo,
+  PoolInfo,
+  GasEstimate,
   ContractState,
   ZKSwapClientConfig,
   ZKSwapEvent,
@@ -47,53 +53,28 @@ import { ZKProofGenerator } from '../proofs/ZKProofGenerator';
 import { ZswapIntegration } from '../utils/ZswapIntegration';
 
 // ============================================================================
-// TYPES
+// JSON-RPC TYPES
 // ============================================================================
 
 /**
- * Gas estimation result
+ * JSON-RPC response structure
  */
-export interface GasEstimate {
-  /** Estimated gas units */
-  gasUnits: bigint;
-  /** Gas price in smallest unit */
-  gasPrice: bigint;
-  /** Total cost in DUST */
-  totalCost: bigint;
-  /** Confidence level (0-1) */
-  confidence: number;
+interface JsonRpcResponse<T = unknown> {
+  jsonrpc: string;
+  id: number;
+  result?: T;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
 }
 
-/**
- * Remove liquidity input
- */
-export interface RemoveLiquidityInput {
-  tokenA: Bytes32;
-  tokenB: Bytes32;
-  shares: bigint;
-  minAmountA: bigint;
-  minAmountB: bigint;
-}
+// ============================================================================
+// TYPES (Re-exported from ../types for convenience)
+// ============================================================================
 
-/**
- * Remove liquidity result
- */
-export interface RemoveLiquidityResult {
-  poolId: Bytes32;
-  txHash: Bytes32;
-  amountA: bigint;
-  amountB: bigint;
-  timestamp: number;
-}
-
-/**
- * Claim rewards result
- */
-export interface ClaimRewardsResult {
-  txHash: Bytes32;
-  amount: bigint;
-  timestamp: number;
-}
+// Types are imported from ../types/index.ts
 
 /**
  * Transaction options
@@ -346,7 +327,7 @@ export class ZKSwapClient {
 
   // Event listeners
   private eventListeners: Map<string, Set<(event: ZKSwapEvent) => void>> = new Map();
-  private eventPollingInterval: NodeJS.Timer | null = null;
+  private eventPollingInterval: ReturnType<typeof setInterval> | null = null;
   private lastProcessedBlock = 0;
 
   constructor(config: ZKSwapClientConfig) {
@@ -409,7 +390,7 @@ export class ZKSwapClient {
     );
 
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
@@ -498,7 +479,7 @@ export class ZKSwapClient {
 
     const txData = this.encodeBatchSwapCall(batchSwapOrder, stakeProof, commitments);
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
@@ -596,7 +577,7 @@ export class ZKSwapClient {
     );
 
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
@@ -613,7 +594,7 @@ export class ZKSwapClient {
   /**
    * Unstake NIGHT tokens
    */
-  async unstake(input: UnstakeInput, options?: TransactionOptions): Promise<StakeResult> {
+  async unstake(input: UnstakeInput, options?: TransactionOptions): Promise<UnstakeResult> {
     if (input.amount <= 0n) {
       throw new ZKSwapError(
         ZKSwapErrorCode.INSUFFICIENT_BALANCE,
@@ -639,17 +620,16 @@ export class ZKSwapClient {
     );
 
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
     const unstakeEvent = this.parseUnstakeEvent(receipt);
-    const stakeInfo = await this.getStakeInfo(userAddress);
 
     return {
-      stakeId: unstakeEvent.stakeId,
+      unstakeId: unstakeEvent.stakeId,
       txHash: tx.hash,
-      isPremiumEligible: stakeInfo.isPremium,
+      amount: input.amount,
       timestamp: receipt.timestamp,
     };
   }
@@ -670,7 +650,7 @@ export class ZKSwapClient {
 
     const txData = this.encodeClaimRewardsCall(commitment.commitment);
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
@@ -678,7 +658,7 @@ export class ZKSwapClient {
 
     return {
       txHash: tx.hash,
-      amount: rewardsEvent.amount,
+      rewardsClaimed: rewardsEvent.amount,
       timestamp: receipt.timestamp,
     };
   }
@@ -737,9 +717,28 @@ export class ZKSwapClient {
       );
     }
 
+    // Resolve token addresses from poolId or direct specification
+    let resolvedTokenA: Bytes32;
+    let resolvedTokenB: Bytes32;
+
+    if (input.poolId) {
+      // Get tokens from pool registry (simplified - would query from contract)
+      const poolTokens = await this.getPoolTokens(input.poolId as Bytes32);
+      resolvedTokenA = poolTokens.tokenA;
+      resolvedTokenB = poolTokens.tokenB;
+    } else if (input.tokenA && input.tokenB) {
+      resolvedTokenA = input.tokenA;
+      resolvedTokenB = input.tokenB;
+    } else {
+      throw new ZKSwapError(
+        ZKSwapErrorCode.POOL_NOT_FOUND,
+        'Must provide either poolId or both tokenA and tokenB'
+      );
+    }
+
     // Ensure token ordering
-    let tokenA = input.tokenA;
-    let tokenB = input.tokenB;
+    let tokenA = resolvedTokenA;
+    let tokenB = resolvedTokenB;
     let amountA = input.amountA;
     let amountB = input.amountB;
 
@@ -763,7 +762,7 @@ export class ZKSwapClient {
     );
 
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
@@ -793,11 +792,29 @@ export class ZKSwapClient {
 
     const userAddress = await this.walletProvider.getAddress();
 
+    // Resolve token addresses from poolId or direct specification
+    let resolvedTokenA: Bytes32;
+    let resolvedTokenB: Bytes32;
+
+    if (input.poolId) {
+      const poolTokens = await this.getPoolTokens(input.poolId as Bytes32);
+      resolvedTokenA = poolTokens.tokenA;
+      resolvedTokenB = poolTokens.tokenB;
+    } else if (input.tokenA && input.tokenB) {
+      resolvedTokenA = input.tokenA;
+      resolvedTokenB = input.tokenB;
+    } else {
+      throw new ZKSwapError(
+        ZKSwapErrorCode.POOL_NOT_FOUND,
+        'Must provide either poolId or both tokenA and tokenB'
+      );
+    }
+
     // Ensure token ordering
-    let tokenA = input.tokenA;
-    let tokenB = input.tokenB;
-    let minAmountA = input.minAmountA;
-    let minAmountB = input.minAmountB;
+    let tokenA = resolvedTokenA;
+    let tokenB = resolvedTokenB;
+    let minAmountA = input.minAmountA || 0n;
+    let minAmountB = input.minAmountB || 0n;
 
     if (tokenA > tokenB) {
       [tokenA, tokenB] = [tokenB, tokenA];
@@ -820,7 +837,7 @@ export class ZKSwapClient {
     );
 
     const tx = await this.sendTransaction(txData, {
-      gasLimit: options?.gasLimit || gasEstimate.gasUnits,
+      gasLimit: options?.gasLimit || gasEstimate.gasLimit,
     });
 
     const receipt = await this.waitForTransaction(tx.hash);
@@ -831,6 +848,7 @@ export class ZKSwapClient {
       txHash: tx.hash,
       amountA: removeEvent.amountA,
       amountB: removeEvent.amountB,
+      sharesBurned: input.shares,
       timestamp: receipt.timestamp,
     };
   }
@@ -862,6 +880,35 @@ export class ZKSwapClient {
     ]);
     const result = await this.callContract(callData);
     return new CompactABIDecoder(result).decodeField();
+  }
+
+  /**
+   * Get token addresses from a pool ID
+   * In production, this would query the pool registry on-chain
+   */
+  private async getPoolTokens(poolId: Bytes32): Promise<{ tokenA: Bytes32; tokenB: Bytes32 }> {
+    // Pool registry mapping (simplified - would be on-chain)
+    const knownPools: Record<string, { tokenA: Bytes32; tokenB: Bytes32 }> = {
+      'night-dust': {
+        tokenA: ('0x' + '00'.repeat(31) + '01') as Bytes32, // NIGHT
+        tokenB: ('0x' + '00'.repeat(31) + '02') as Bytes32, // DUST
+      },
+      'night-usdc': {
+        tokenA: ('0x' + '00'.repeat(31) + '01') as Bytes32, // NIGHT
+        tokenB: ('0x' + '00'.repeat(31) + '03') as Bytes32, // USDC
+      },
+    };
+
+    const poolKey = poolId.toLowerCase();
+    if (knownPools[poolKey]) {
+      return knownPools[poolKey];
+    }
+
+    // Try to decode from pool ID hash (would query contract in production)
+    throw new ZKSwapError(
+      ZKSwapErrorCode.POOL_NOT_FOUND,
+      `Pool not found: ${poolId}`
+    );
   }
 
   /**
@@ -922,16 +969,21 @@ export class ZKSwapClient {
       complexityMultiplier = BigInt(Math.max(1, Number(batch.activeCount)));
     }
 
-    const gasUnits = baseGas * complexityMultiplier;
+    const gasLimit = baseGas * complexityMultiplier;
 
     // Get current gas price
     const gasPrice = await this.getGasPrice();
+    const totalCost = gasLimit * gasPrice;
+
+    // Format cost for display (assuming 9 decimals)
+    const costInDust = Number(totalCost) / 1e9;
+    const formattedCost = `${costInDust.toFixed(6)} DUST`;
 
     return {
-      gasUnits,
+      gasLimit,
       gasPrice,
-      totalCost: gasUnits * gasPrice,
-      confidence: 0.9,
+      totalCost,
+      formattedCost,
     };
   }
 
@@ -948,7 +1000,7 @@ export class ZKSwapClient {
         }),
       });
 
-      const result = await response.json();
+      const result = await response.json() as JsonRpcResponse<string>;
       return BigInt(result.result || '0x1');
     } catch {
       return 1n; // Default gas price
@@ -1299,8 +1351,8 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
-    return parseInt(result.result, 16);
+    const result = await response.json() as JsonRpcResponse<string>;
+    return parseInt(result.result || '0x0', 16);
   }
 
   private async sendTransaction(
@@ -1328,11 +1380,11 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as JsonRpcResponse<string>;
     if (result.error) {
       throw new ZKSwapError(ZKSwapErrorCode.NETWORK_ERROR, result.error.message);
     }
-    return { hash: result.result as Bytes32 };
+    return { hash: (result.result || '0x') as Bytes32 };
   }
 
   private async waitForTransaction(
@@ -1354,7 +1406,10 @@ export class ZKSwapClient {
         }),
       });
 
-      const result = await response.json();
+      const result = await response.json() as JsonRpcResponse<{
+        blockNumber: string;
+        logs: unknown[];
+      } | null>;
 
       if (result.result) {
         return {
@@ -1388,7 +1443,7 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as JsonRpcResponse<string>;
     return result.result || '0x';
   }
 
@@ -1410,8 +1465,8 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
-    return parseInt(result.result, 16);
+    const result = await response.json() as JsonRpcResponse<string>;
+    return parseInt(result.result || '0x0', 16);
   }
 
   private async queryLogs(eventType: string, fromBlock: number, toBlock?: number): Promise<unknown[]> {
@@ -1433,7 +1488,7 @@ export class ZKSwapClient {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as JsonRpcResponse<unknown[]>;
     return result.result || [];
   }
 

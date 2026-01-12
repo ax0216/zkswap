@@ -188,6 +188,32 @@ export interface StakeResult {
   timestamp: number;
 }
 
+/**
+ * Unstake result
+ */
+export interface UnstakeResult {
+  /** Unique unstake identifier */
+  unstakeId: Bytes32;
+  /** Transaction hash */
+  txHash: Bytes32;
+  /** Amount unstaked */
+  amount: bigint;
+  /** Timestamp */
+  timestamp: number;
+}
+
+/**
+ * Claim rewards result
+ */
+export interface ClaimRewardsResult {
+  /** Transaction hash */
+  txHash: Bytes32;
+  /** Amount of rewards claimed */
+  rewardsClaimed: bigint;
+  /** Timestamp */
+  timestamp: number;
+}
+
 // ============================================================================
 // LIQUIDITY POOL TYPES
 // ============================================================================
@@ -230,9 +256,15 @@ export interface PublicPoolInfo {
  * Add liquidity input parameters
  */
 export interface AddLiquidityInput {
-  tokenA: Bytes32;
-  tokenB: Bytes32;
+  /** Pool identifier (alternative to specifying tokenA/tokenB) */
+  poolId?: Bytes32 | string;
+  /** Token A address */
+  tokenA?: Bytes32;
+  /** Token B address */
+  tokenB?: Bytes32;
+  /** Amount of token A to add */
   amountA: bigint;
+  /** Amount of token B to add */
   amountB: bigint;
 }
 
@@ -248,6 +280,76 @@ export interface AddLiquidityResult {
   sharesIssued: bigint;
   /** Timestamp */
   timestamp: number;
+}
+
+/**
+ * Remove liquidity input parameters
+ */
+export interface RemoveLiquidityInput {
+  /** Pool identifier (alternative to specifying tokenA/tokenB) */
+  poolId?: Bytes32 | string;
+  /** Token A address */
+  tokenA?: Bytes32;
+  /** Token B address */
+  tokenB?: Bytes32;
+  /** LP shares to remove */
+  shares: bigint;
+  /** Minimum amount A to receive */
+  minAmountA?: bigint;
+  /** Minimum amount B to receive */
+  minAmountB?: bigint;
+}
+
+/**
+ * Remove liquidity result
+ */
+export interface RemoveLiquidityResult {
+  /** Pool identifier */
+  poolId: Bytes32;
+  /** Transaction hash */
+  txHash: Bytes32;
+  /** Amount of token A returned */
+  amountA: bigint;
+  /** Amount of token B returned */
+  amountB: bigint;
+  /** LP shares burned */
+  sharesBurned: bigint;
+  /** Timestamp */
+  timestamp: number;
+}
+
+/**
+ * Pool info for display
+ */
+export interface PoolInfo {
+  /** Pool identifier */
+  poolId: Bytes32;
+  /** Token A address */
+  tokenA: Bytes32;
+  /** Token B address */
+  tokenB: Bytes32;
+  /** Reserve amount for token A */
+  reserveA: bigint;
+  /** Reserve amount for token B */
+  reserveB: bigint;
+  /** Total LP shares */
+  totalShares: bigint;
+  /** Fee rate in basis points */
+  feeRate: number;
+}
+
+/**
+ * Gas estimate result
+ */
+export interface GasEstimate {
+  /** Estimated gas limit */
+  gasLimit: bigint;
+  /** Current gas price */
+  gasPrice: bigint;
+  /** Total estimated cost in native token */
+  totalCost: bigint;
+  /** Formatted cost string */
+  formattedCost: string;
 }
 
 // ============================================================================
@@ -528,3 +630,17 @@ export const CONSTANTS = {
   /** Basis points divisor */
   BPS_DIVISOR: 10000,
 } as const;
+
+// ============================================================================
+// TYPE ALIASES FOR CONVENIENCE
+// ============================================================================
+
+/**
+ * Swap input (alias for SwapOrderInput)
+ */
+export type SwapInput = SwapOrderInput;
+
+/**
+ * Batch swap input (alias for BatchSwapOrderInput)
+ */
+export type BatchSwapInput = BatchSwapOrderInput;

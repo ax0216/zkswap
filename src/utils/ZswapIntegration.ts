@@ -475,12 +475,17 @@ export class ZswapIntegration {
    * Get Merkle proof for a commitment
    */
   private async getMerkleProof(commitment: Bytes32): Promise<MerkleProof> {
-    const response = await this.rpcCall('zswap_getMerkleProof', [commitment]);
+    const response = await this.rpcCall<{
+      siblings: string[];
+      pathIndices: number[];
+      root: string;
+    }>('zswap_getMerkleProof', [commitment]);
 
+    const result = response.result || { siblings: [], pathIndices: [], root: '0x' };
     return {
-      siblings: response.result.siblings as Bytes32[],
-      pathIndices: response.result.pathIndices as number[],
-      root: response.result.root as Bytes32,
+      siblings: result.siblings as Bytes32[],
+      pathIndices: result.pathIndices,
+      root: result.root as Bytes32,
     };
   }
 
@@ -528,7 +533,7 @@ export class ZswapIntegration {
   private async submitShieldedTransfer(
     proof: ZswapTransferProof
   ): Promise<Bytes32> {
-    const response = await this.rpcCall('zswap_submitTransfer', [
+    const response = await this.rpcCall<string>('zswap_submitTransfer', [
       {
         inputCommitments: proof.inputCommitments.map(c => c.commitment),
         outputCommitments: proof.outputCommitments.map(c => c.commitment),
@@ -537,7 +542,7 @@ export class ZswapIntegration {
       },
     ]);
 
-    return response.result as Bytes32;
+    return (response.result || '0x') as Bytes32;
   }
 
   /**
@@ -547,21 +552,24 @@ export class ZswapIntegration {
     fromBlock: number,
     toBlock?: number
   ): Promise<Array<{ commitment: Bytes32; encryptedNote: Uint8Array }>> {
-    const response = await this.rpcCall('zswap_getCommitmentEvents', [
+    const response = await this.rpcCall<Array<{ commitment: string; encryptedNote: string }>>('zswap_getCommitmentEvents', [
       fromBlock,
       toBlock || 'latest',
     ]);
 
-    return response.result || [];
+    return (response.result || []).map(evt => ({
+      commitment: evt.commitment as Bytes32,
+      encryptedNote: this.hexToBytes(evt.encryptedNote as Bytes32),
+    }));
   }
 
   /**
    * Make RPC call
    */
-  private async rpcCall(
+  private async rpcCall<T = unknown>(
     method: string,
     params: unknown[]
-  ): Promise<{ result: unknown }> {
+  ): Promise<{ result: T | undefined; error?: { code: number; message: string } }> {
     const response = await fetch(this.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -573,7 +581,7 @@ export class ZswapIntegration {
       }),
     });
 
-    return response.json();
+    return response.json() as Promise<{ result: T | undefined; error?: { code: number; message: string } }>;
   }
 
   // ==========================================================================

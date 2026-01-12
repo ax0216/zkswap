@@ -6,11 +6,19 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
-import { WalletProvider as MidnightWalletProvider } from '@midnight-ntwrk/wallet-api';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+/**
+ * Midnight wallet provider interface
+ */
+export interface MidnightWalletProvider {
+  getBalance(address: string, tokenId: string): Promise<string>;
+  signTransaction(tx: unknown): Promise<unknown>;
+  signMessage(message: string, address: string): Promise<string>;
+}
 
 export interface WalletState {
   isConnected: boolean;
@@ -32,6 +40,8 @@ export interface WalletContextValue extends WalletState {
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
   signMessage: (message: string) => Promise<string>;
+  /** Whether user has premium status (for display purposes, actual check is in contract) */
+  isPremium: boolean;
 }
 
 // ============================================================================
@@ -175,12 +185,16 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
     };
   }, [state.address, connect, disconnect]);
 
+  // Check if user has premium status (>100 NIGHT staked)
+  const isPremium = state.balance ? state.balance.night >= 100_000_000_000n : false;
+
   const value: WalletContextValue = {
     ...state,
     connect,
     disconnect,
     refreshBalance,
     signMessage,
+    isPremium,
   };
 
   return (

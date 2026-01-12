@@ -5,9 +5,9 @@
  * Shows current stake, premium status, and rewards.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, ChangeEvent } from 'react';
 import { useWallet } from '../context/WalletContext';
-import { useZKSwap } from '../hooks/useZKSwap';
+import { useZKSwap, StakeInfo } from '../hooks/useZKSwap';
 
 // ============================================================================
 // Types
@@ -16,14 +16,6 @@ import { useZKSwap } from '../hooks/useZKSwap';
 interface StakePanelProps {
   className?: string;
   onStakeComplete?: (txHash: string) => void;
-}
-
-interface StakeInfo {
-  stakedAmount: bigint;
-  rewards: bigint;
-  lastStakeTime: Date;
-  isPremium: boolean;
-  tier: 'basic' | 'premium' | 'vip';
 }
 
 // ============================================================================
@@ -43,7 +35,8 @@ export function StakePanel({
   onStakeComplete,
 }: StakePanelProps): JSX.Element {
   const { isConnected, address, balance } = useWallet();
-  const { stake, unstake, claimRewards, getStakeInfo, isLoading, error } = useZKSwap();
+  const zkSwap = useZKSwap();
+  const { stake, unstake, claimRewards, getStakeInfo, isStaking, error } = zkSwap;
 
   // State
   const [stakeInfo, setStakeInfo] = useState<StakeInfo | null>(null);
@@ -74,30 +67,31 @@ export function StakePanel({
   }, [isConnected, address, getStakeInfo]);
 
   // Format amount for display
-  const formatAmount = (amount: bigint): string => {
+  const formatAmount = useCallback((amount: bigint): string => {
     const divisor = 10n ** BigInt(DECIMALS);
     const whole = amount / divisor;
     const fraction = amount % divisor;
     const fractionStr = fraction.toString().padStart(DECIMALS, '0').slice(0, 4);
     return `${whole.toLocaleString()}.${fractionStr}`;
-  };
+  }, []);
 
   // Parse amount from input
-  const parseAmount = (value: string): bigint => {
+  const parseAmount = useCallback((value: string): bigint => {
+    if (!value) return 0n;
     const [whole, fraction = ''] = value.split('.');
     const paddedFraction = fraction.padEnd(DECIMALS, '0').slice(0, DECIMALS);
     return BigInt(whole || '0') * 10n ** BigInt(DECIMALS) + BigInt(paddedFraction);
-  };
+  }, []);
 
   // Calculate tier
-  const getTier = (amount: bigint): 'basic' | 'premium' | 'vip' => {
+  const getTier = useCallback((amount: bigint): 'basic' | 'premium' | 'vip' => {
     if (amount >= VIP_THRESHOLD) return 'vip';
     if (amount >= PREMIUM_THRESHOLD) return 'premium';
     return 'basic';
-  };
+  }, []);
 
   // Calculate progress to next tier
-  const getProgressToNextTier = (amount: bigint): { percent: number; remaining: bigint; nextTier: string } => {
+  const getProgressToNextTier = useCallback((amount: bigint): { percent: number; remaining: bigint; nextTier: string } => {
     if (amount >= VIP_THRESHOLD) {
       return { percent: 100, remaining: 0n, nextTier: 'VIP' };
     }
@@ -107,168 +101,148 @@ export function StakePanel({
     }
     const progress = Number(amount * 100n / PREMIUM_THRESHOLD);
     return { percent: progress, remaining: PREMIUM_THRESHOLD - amount, nextTier: 'Premium' };
-  };
+  }, []);
 
   // Handle stake
-  const handleStake = async () => {
+  const handleStake = useCallback(async () => {
     if (!stakeAmount) return;
 
     try {
       const amount = parseAmount(stakeAmount);
-      const txHash = await stake(amount);
-      onStakeComplete?.(txHash);
+      const result = await stake({ amount });
+      onStakeComplete?.(result.txHash);
       setStakeAmount('');
       // Refresh stake info
-      const info = await getStakeInfo(address!);
-      setStakeInfo(info);
+      if (address) {
+        const info = await getStakeInfo(address);
+        setStakeInfo(info);
+      }
     } catch (err) {
       console.error('Stake failed:', err);
     }
-  };
+  }, [stakeAmount, parseAmount, stake, onStakeComplete, address, getStakeInfo]);
 
   // Handle unstake
-  const handleUnstake = async () => {
+  const handleUnstake = useCallback(async () => {
     if (!unstakeAmount) return;
 
     try {
       const amount = parseAmount(unstakeAmount);
-      const txHash = await unstake(amount);
-      onStakeComplete?.(txHash);
+      const result = await unstake({ amount });
+      onStakeComplete?.(result.txHash);
       setUnstakeAmount('');
       // Refresh stake info
-      const info = await getStakeInfo(address!);
-      setStakeInfo(info);
+      if (address) {
+        const info = await getStakeInfo(address);
+        setStakeInfo(info);
+      }
     } catch (err) {
       console.error('Unstake failed:', err);
     }
-  };
+  }, [unstakeAmount, parseAmount, unstake, onStakeComplete, address, getStakeInfo]);
 
   // Handle claim rewards
-  const handleClaimRewards = async () => {
-    if (!stakeInfo || stakeInfo.rewards <= 0n) return;
-
+  const handleClaimRewards = useCallback(async () => {
     try {
-      const txHash = await claimRewards();
-      onStakeComplete?.(txHash);
+      const result = await claimRewards();
+      onStakeComplete?.(result.txHash);
       // Refresh stake info
-      const info = await getStakeInfo(address!);
-      setStakeInfo(info);
+      if (address) {
+        const info = await getStakeInfo(address);
+        setStakeInfo(info);
+      }
     } catch (err) {
-      console.error('Claim failed:', err);
+      console.error('Claim rewards failed:', err);
     }
-  };
+  }, [claimRewards, onStakeComplete, address, getStakeInfo]);
 
-  // Set max amount
-  const setMaxStake = () => {
-    if (balance?.night) {
+  // Handle input changes
+  const handleStakeAmountChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setStakeAmount(e.target.value);
+  }, []);
+
+  const handleUnstakeAmountChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    setUnstakeAmount(e.target.value);
+  }, []);
+
+  // Set max stake amount
+  const handleMaxStake = useCallback(() => {
+    if (balance) {
       setStakeAmount(formatAmount(balance.night));
     }
-  };
+  }, [balance, formatAmount]);
 
-  const setMaxUnstake = () => {
-    if (stakeInfo?.stakedAmount) {
+  // Set max unstake amount
+  const handleMaxUnstake = useCallback(() => {
+    if (stakeInfo) {
       setUnstakeAmount(formatAmount(stakeInfo.stakedAmount));
     }
-  };
+  }, [stakeInfo, formatAmount]);
 
+  // Not connected state
   if (!isConnected) {
     return (
       <div className={`zkswap-stake-panel ${className}`}>
-        <div className="stake-header">
+        <div className="panel-header">
           <h2>Stake NIGHT</h2>
         </div>
         <div className="connect-prompt">
-          <p>Connect your wallet to stake NIGHT and unlock premium features</p>
+          <p>Connect your wallet to stake NIGHT tokens</p>
         </div>
       </div>
     );
   }
 
-  const progress = stakeInfo ? getProgressToNextTier(stakeInfo.stakedAmount) : null;
+  const currentStaked = stakeInfo?.stakedAmount || 0n;
+  const tier = getTier(currentStaked);
+  const progress = getProgressToNextTier(currentStaked);
 
   return (
     <div className={`zkswap-stake-panel ${className}`}>
       {/* Header */}
-      <div className="stake-header">
+      <div className="panel-header">
         <h2>Stake NIGHT</h2>
-        {stakeInfo && (
-          <span className={`tier-badge tier-${stakeInfo.tier}`}>
-            {stakeInfo.tier.toUpperCase()}
-          </span>
+        <div className={`tier-badge ${tier}`}>{tier.toUpperCase()}</div>
+      </div>
+
+      {/* Staking Stats */}
+      <div className="staking-stats">
+        <div className="stat-row">
+          <span className="stat-label">Your Stake</span>
+          <span className="stat-value">{formatAmount(currentStaked)} NIGHT</span>
+        </div>
+        {stakeInfo && stakeInfo.rewards > 0n && (
+          <div className="stat-row">
+            <span className="stat-label">Pending Rewards</span>
+            <span className="stat-value rewards">{formatAmount(stakeInfo.rewards)} NIGHT</span>
+          </div>
+        )}
+        {balance && (
+          <div className="stat-row">
+            <span className="stat-label">Available Balance</span>
+            <span className="stat-value">{formatAmount(balance.night)} NIGHT</span>
+          </div>
         )}
       </div>
 
-      {/* Stake Info Card */}
-      {isLoadingInfo ? (
-        <div className="loading-state">Loading stake info...</div>
-      ) : stakeInfo ? (
-        <div className="stake-info-card">
-          <div className="info-row">
-            <span className="label">Your Stake</span>
-            <span className="value">{formatAmount(stakeInfo.stakedAmount)} NIGHT</span>
+      {/* Tier Progress */}
+      {tier !== 'vip' && (
+        <div className="tier-progress">
+          <div className="progress-header">
+            <span>Progress to {progress.nextTier}</span>
+            <span>{progress.percent.toFixed(1)}%</span>
           </div>
-          <div className="info-row">
-            <span className="label">Pending Rewards</span>
-            <span className="value rewards">{formatAmount(stakeInfo.rewards)} NIGHT</span>
+          <div className="progress-bar">
+            <div className="progress-fill" style={{ width: `${progress.percent}%` }} />
           </div>
-
-          {/* Progress to next tier */}
-          {progress && progress.percent < 100 && (
-            <div className="tier-progress">
-              <div className="progress-header">
-                <span>Progress to {progress.nextTier}</span>
-                <span>{progress.percent.toFixed(1)}%</span>
-              </div>
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{ width: `${progress.percent}%` }}
-                />
-              </div>
-              <span className="remaining">
-                {formatAmount(progress.remaining)} NIGHT remaining
-              </span>
-            </div>
-          )}
-
-          {/* Claim Rewards Button */}
-          {stakeInfo.rewards > 0n && (
-            <button
-              className="claim-button"
-              onClick={handleClaimRewards}
-              disabled={isLoading}
-            >
-              {isLoading ? 'Claiming...' : `Claim ${formatAmount(stakeInfo.rewards)} NIGHT`}
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="stake-info-card empty">
-          <p>No stake found. Stake NIGHT to unlock premium features!</p>
+          <div className="progress-remaining">
+            {formatAmount(progress.remaining)} NIGHT remaining
+          </div>
         </div>
       )}
 
-      {/* Premium Benefits */}
-      <div className="benefits-section">
-        <h3>Premium Benefits</h3>
-        <ul className="benefits-list">
-          <li className={stakeInfo?.isPremium ? 'unlocked' : ''}>
-            <span className="check">{stakeInfo?.isPremium ? '✓' : '○'}</span>
-            Batch swaps (up to 5 assets at once)
-          </li>
-          <li className={stakeInfo?.tier === 'vip' ? 'unlocked' : ''}>
-            <span className="check">{stakeInfo?.tier === 'vip' ? '✓' : '○'}</span>
-            Reduced fees (0.3% instead of 0.5%)
-          </li>
-          <li className={stakeInfo?.tier === 'vip' ? 'unlocked' : ''}>
-            <span className="check">{stakeInfo?.tier === 'vip' ? '✓' : '○'}</span>
-            Priority transaction processing
-          </li>
-        </ul>
-      </div>
-
       {/* Tabs */}
-      <div className="stake-tabs">
+      <div className="panel-tabs">
         <button
           className={activeTab === 'stake' ? 'active' : ''}
           onClick={() => setActiveTab('stake')}
@@ -283,75 +257,81 @@ export function StakePanel({
         </button>
       </div>
 
-      {/* Stake/Unstake Form */}
-      <div className="stake-form">
-        {activeTab === 'stake' ? (
-          <>
-            <div className="input-group">
-              <label>Amount to Stake</label>
-              <div className="input-row">
-                <input
-                  type="number"
-                  placeholder="0.0"
-                  value={stakeAmount}
-                  onChange={e => setStakeAmount(e.target.value)}
-                />
-                <button className="max-button" onClick={setMaxStake}>
-                  MAX
-                </button>
-              </div>
-              {balance && (
-                <span className="balance-hint">
-                  Available: {formatAmount(balance.night)} NIGHT
-                </span>
-              )}
-            </div>
-            <button
-              className="action-button stake"
-              onClick={handleStake}
-              disabled={!stakeAmount || isLoading}
-            >
-              {isLoading ? 'Staking...' : 'Stake NIGHT'}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="input-group">
-              <label>Amount to Unstake</label>
-              <div className="input-row">
-                <input
-                  type="number"
-                  placeholder="0.0"
-                  value={unstakeAmount}
-                  onChange={e => setUnstakeAmount(e.target.value)}
-                />
-                <button className="max-button" onClick={setMaxUnstake}>
-                  MAX
-                </button>
-              </div>
-              {stakeInfo && (
-                <span className="balance-hint">
-                  Staked: {formatAmount(stakeInfo.stakedAmount)} NIGHT
-                </span>
-              )}
-            </div>
-            <button
-              className="action-button unstake"
-              onClick={handleUnstake}
-              disabled={!unstakeAmount || isLoading}
-            >
-              {isLoading ? 'Unstaking...' : 'Unstake NIGHT'}
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* Error Display */}
-      {error && (
-        <div className="error-message">
-          {error}
+      {/* Stake Form */}
+      {activeTab === 'stake' && (
+        <div className="stake-form">
+          <div className="input-group">
+            <input
+              type="number"
+              placeholder="0.0"
+              value={stakeAmount}
+              onChange={handleStakeAmountChange}
+            />
+            <button className="max-button" onClick={handleMaxStake}>MAX</button>
+          </div>
+          <button
+            className="action-button"
+            onClick={handleStake}
+            disabled={!stakeAmount || isStaking}
+          >
+            {isStaking ? 'Staking...' : 'Stake NIGHT'}
+          </button>
         </div>
       )}
+
+      {/* Unstake Form */}
+      {activeTab === 'unstake' && (
+        <div className="unstake-form">
+          <div className="input-group">
+            <input
+              type="number"
+              placeholder="0.0"
+              value={unstakeAmount}
+              onChange={handleUnstakeAmountChange}
+            />
+            <button className="max-button" onClick={handleMaxUnstake}>MAX</button>
+          </div>
+          <button
+            className="action-button"
+            onClick={handleUnstake}
+            disabled={!unstakeAmount || isStaking}
+          >
+            {isStaking ? 'Unstaking...' : 'Unstake NIGHT'}
+          </button>
+        </div>
+      )}
+
+      {/* Claim Rewards */}
+      {stakeInfo && stakeInfo.rewards > 0n && (
+        <button className="claim-button" onClick={handleClaimRewards}>
+          Claim {formatAmount(stakeInfo.rewards)} NIGHT Rewards
+        </button>
+      )}
+
+      {/* Premium Benefits */}
+      <div className="benefits-section">
+        <h3>Premium Benefits</h3>
+        <div className="benefit-list">
+          <div className={`benefit ${tier !== 'basic' ? 'unlocked' : ''}`}>
+            <span className="benefit-icon">{tier !== 'basic' ? '✓' : '○'}</span>
+            <span>Batch Swaps (up to 5)</span>
+            <span className="benefit-threshold">100+ NIGHT</span>
+          </div>
+          <div className={`benefit ${tier === 'vip' ? 'unlocked' : ''}`}>
+            <span className="benefit-icon">{tier === 'vip' ? '✓' : '○'}</span>
+            <span>Reduced Fees (0.3%)</span>
+            <span className="benefit-threshold">1000+ NIGHT</span>
+          </div>
+          <div className={`benefit ${tier === 'vip' ? 'unlocked' : ''}`}>
+            <span className="benefit-icon">{tier === 'vip' ? '✓' : '○'}</span>
+            <span>Priority Processing</span>
+            <span className="benefit-threshold">1000+ NIGHT</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && <div className="error-message">{error}</div>}
     </div>
   );
 }
@@ -369,14 +349,14 @@ export const stakePanelStyles = `
     max-width: 480px;
   }
 
-  .zkswap-stake-panel .stake-header {
+  .zkswap-stake-panel .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
   }
 
-  .zkswap-stake-panel .stake-header h2 {
+  .zkswap-stake-panel .panel-header h2 {
     margin: 0;
     color: #e5e7eb;
     font-size: 20px;
@@ -384,84 +364,68 @@ export const stakePanelStyles = `
 
   .zkswap-stake-panel .tier-badge {
     padding: 4px 12px;
-    border-radius: 12px;
+    border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
+    text-transform: uppercase;
   }
 
-  .zkswap-stake-panel .tier-basic {
+  .zkswap-stake-panel .tier-badge.basic {
     background: #374151;
     color: #9ca3af;
   }
 
-  .zkswap-stake-panel .tier-premium {
+  .zkswap-stake-panel .tier-badge.premium {
     background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     color: white;
   }
 
-  .zkswap-stake-panel .tier-vip {
-    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+  .zkswap-stake-panel .tier-badge.vip {
+    background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
     color: white;
   }
 
-  .zkswap-stake-panel .connect-prompt {
-    text-align: center;
-    padding: 40px 20px;
-    color: #9ca3af;
-  }
-
-  .zkswap-stake-panel .loading-state {
-    text-align: center;
-    padding: 20px;
-    color: #9ca3af;
-  }
-
-  .zkswap-stake-panel .stake-info-card {
+  .zkswap-stake-panel .staking-stats {
     background: #111827;
     border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
+    padding: 16px;
+    margin-bottom: 16px;
   }
 
-  .zkswap-stake-panel .stake-info-card.empty {
-    text-align: center;
-    color: #9ca3af;
-  }
-
-  .zkswap-stake-panel .info-row {
+  .zkswap-stake-panel .stat-row {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
+    padding: 6px 0;
   }
 
-  .zkswap-stake-panel .info-row .label {
+  .zkswap-stake-panel .stat-label {
     color: #9ca3af;
     font-size: 14px;
   }
 
-  .zkswap-stake-panel .info-row .value {
+  .zkswap-stake-panel .stat-value {
     color: #e5e7eb;
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 500;
   }
 
-  .zkswap-stake-panel .info-row .value.rewards {
+  .zkswap-stake-panel .stat-value.rewards {
     color: #10b981;
   }
 
   .zkswap-stake-panel .tier-progress {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid #374151;
+    background: #111827;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
   }
 
   .zkswap-stake-panel .progress-header {
     display: flex;
     justify-content: space-between;
-    color: #9ca3af;
-    font-size: 12px;
     margin-bottom: 8px;
+    color: #9ca3af;
+    font-size: 13px;
   }
 
   .zkswap-stake-panel .progress-bar {
@@ -473,72 +437,19 @@ export const stakePanelStyles = `
 
   .zkswap-stake-panel .progress-fill {
     height: 100%;
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%);
     border-radius: 4px;
     transition: width 0.3s ease;
   }
 
-  .zkswap-stake-panel .remaining {
-    display: block;
-    margin-top: 4px;
-    color: #6b7280;
-    font-size: 11px;
-  }
-
-  .zkswap-stake-panel .claim-button {
-    width: 100%;
-    margin-top: 16px;
-    padding: 12px;
-    border: none;
-    border-radius: 8px;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .zkswap-stake-panel .claim-button:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-  }
-
-  .zkswap-stake-panel .benefits-section {
-    margin-bottom: 20px;
-  }
-
-  .zkswap-stake-panel .benefits-section h3 {
-    color: #9ca3af;
-    font-size: 14px;
-    margin: 0 0 12px 0;
-  }
-
-  .zkswap-stake-panel .benefits-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .zkswap-stake-panel .benefits-list li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 0;
-    color: #6b7280;
-    font-size: 14px;
-  }
-
-  .zkswap-stake-panel .benefits-list li.unlocked {
-    color: #10b981;
-  }
-
-  .zkswap-stake-panel .benefits-list li .check {
-    width: 20px;
+  .zkswap-stake-panel .progress-remaining {
+    margin-top: 8px;
     text-align: center;
+    color: #6b7280;
+    font-size: 12px;
   }
 
-  .zkswap-stake-panel .stake-tabs {
+  .zkswap-stake-panel .panel-tabs {
     display: flex;
     gap: 4px;
     background: #111827;
@@ -547,7 +458,7 @@ export const stakePanelStyles = `
     margin-bottom: 16px;
   }
 
-  .zkswap-stake-panel .stake-tabs button {
+  .zkswap-stake-panel .panel-tabs button {
     flex: 1;
     padding: 10px;
     border: none;
@@ -560,98 +471,123 @@ export const stakePanelStyles = `
     transition: all 0.2s ease;
   }
 
-  .zkswap-stake-panel .stake-tabs button.active {
+  .zkswap-stake-panel .panel-tabs button.active {
     background: #374151;
     color: #e5e7eb;
   }
 
-  .zkswap-stake-panel .stake-form {
-    margin-bottom: 16px;
+  .zkswap-stake-panel .connect-prompt {
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
   }
 
   .zkswap-stake-panel .input-group {
-    margin-bottom: 16px;
-  }
-
-  .zkswap-stake-panel .input-group label {
-    display: block;
-    color: #9ca3af;
-    font-size: 14px;
-    margin-bottom: 8px;
-  }
-
-  .zkswap-stake-panel .input-row {
     display: flex;
     gap: 8px;
+    margin-bottom: 12px;
   }
 
-  .zkswap-stake-panel .input-row input {
+  .zkswap-stake-panel .input-group input {
     flex: 1;
     padding: 14px;
     border: 1px solid #374151;
     border-radius: 10px;
     background: #111827;
     color: #e5e7eb;
-    font-size: 18px;
+    font-size: 16px;
     outline: none;
   }
 
-  .zkswap-stake-panel .input-row input:focus {
-    border-color: #6366f1;
-  }
-
   .zkswap-stake-panel .max-button {
-    padding: 14px 16px;
-    border: 1px solid #374151;
+    padding: 0 16px;
+    border: 1px solid #6366f1;
     border-radius: 10px;
     background: transparent;
     color: #6366f1;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .zkswap-stake-panel .max-button:hover {
-    background: rgba(99, 102, 241, 0.1);
-  }
-
-  .zkswap-stake-panel .balance-hint {
-    display: block;
-    margin-top: 8px;
-    color: #6b7280;
-    font-size: 12px;
   }
 
   .zkswap-stake-panel .action-button {
     width: 100%;
-    padding: 16px;
+    padding: 14px;
     border: none;
-    border-radius: 12px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
   }
 
-  .zkswap-stake-panel .action-button.stake {
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-    color: white;
+  .zkswap-stake-panel .action-button:disabled {
+    background: #374151;
+    color: #6b7280;
+    cursor: not-allowed;
   }
 
-  .zkswap-stake-panel .action-button.unstake {
-    background: #374151;
+  .zkswap-stake-panel .claim-button {
+    width: 100%;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid #10b981;
+    border-radius: 10px;
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .zkswap-stake-panel .benefits-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #374151;
+  }
+
+  .zkswap-stake-panel .benefits-section h3 {
+    margin: 0 0 12px 0;
+    color: #e5e7eb;
+    font-size: 14px;
+  }
+
+  .zkswap-stake-panel .benefit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .zkswap-stake-panel .benefit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: #111827;
+    border-radius: 8px;
+    color: #6b7280;
+    font-size: 13px;
+  }
+
+  .zkswap-stake-panel .benefit.unlocked {
     color: #e5e7eb;
   }
 
-  .zkswap-stake-panel .action-button:hover:not(:disabled) {
-    transform: translateY(-2px);
+  .zkswap-stake-panel .benefit-icon {
+    width: 16px;
+    text-align: center;
   }
 
-  .zkswap-stake-panel .action-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
+  .zkswap-stake-panel .benefit.unlocked .benefit-icon {
+    color: #10b981;
+  }
+
+  .zkswap-stake-panel .benefit-threshold {
+    margin-left: auto;
+    color: #6b7280;
+    font-size: 11px;
   }
 
   .zkswap-stake-panel .error-message {
@@ -659,6 +595,7 @@ export const stakePanelStyles = `
     color: #fca5a5;
     padding: 12px;
     border-radius: 8px;
+    margin-top: 16px;
     font-size: 14px;
     text-align: center;
   }

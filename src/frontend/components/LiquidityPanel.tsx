@@ -5,9 +5,9 @@
  * Shows LP positions and yield farming rewards.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, ChangeEvent } from 'react';
 import { useWallet } from '../context/WalletContext';
-import { useZKSwap } from '../hooks/useZKSwap';
+import { useZKSwap, PoolDisplayInfo, LPPosition } from '../hooks/useZKSwap';
 
 // ============================================================================
 // Types
@@ -18,22 +18,11 @@ interface LiquidityPanelProps {
   onComplete?: (txHash: string) => void;
 }
 
-interface Pool {
-  id: string;
-  tokenA: { symbol: string; address: string };
-  tokenB: { symbol: string; address: string };
+// Extended pool info with reserves for UI calculations
+interface PoolWithReserves extends PoolDisplayInfo {
   reserveA: bigint;
   reserveB: bigint;
   totalShares: bigint;
-  apy: number;
-}
-
-interface LPPosition {
-  poolId: string;
-  shares: bigint;
-  valueA: bigint;
-  valueB: bigint;
-  pendingRewards: bigint;
 }
 
 // ============================================================================
@@ -61,9 +50,9 @@ export function LiquidityPanel({
   } = useZKSwap();
 
   // State
-  const [pools, setPools] = useState<Pool[]>([]);
+  const [pools, setPools] = useState<PoolWithReserves[]>([]);
   const [positions, setPositions] = useState<LPPosition[]>([]);
-  const [selectedPool, setSelectedPool] = useState<Pool | null>(null);
+  const [selectedPool, setSelectedPool] = useState<PoolWithReserves | null>(null);
   const [activeTab, setActiveTab] = useState<'add' | 'remove' | 'positions'>('add');
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
@@ -76,9 +65,18 @@ export function LiquidityPanel({
       setIsLoadingData(true);
       try {
         const poolData = await getPools();
-        setPools(poolData);
-        if (poolData.length > 0 && !selectedPool) {
-          setSelectedPool(poolData[0]);
+        // Extend pool data with reserves for UI calculations
+        const extendedPools: PoolWithReserves[] = poolData.map(pool => ({
+          ...pool,
+          tokenA: { ...pool.tokenA, address: pool.id.split('-')[0] || '' },
+          tokenB: { ...pool.tokenB, address: pool.id.split('-')[1] || '' },
+          reserveA: pool.tvl / 2n, // Approximate from TVL
+          reserveB: pool.tvl / 2n,
+          totalShares: pool.tvl,
+        }));
+        setPools(extendedPools);
+        if (extendedPools.length > 0 && !selectedPool) {
+          setSelectedPool(extendedPools[0]);
         }
 
         if (isConnected && address) {
@@ -123,12 +121,12 @@ export function LiquidityPanel({
     if (!selectedPool || !amountA || !amountB) return;
 
     try {
-      const txHash = await addLiquidity({
+      const result = await addLiquidity({
         poolId: selectedPool.id,
         amountA: parseAmount(amountA),
         amountB: parseAmount(amountB),
       });
-      onComplete?.(txHash);
+      onComplete?.(result.txHash);
       setAmountA('');
       setAmountB('');
       // Refresh positions
@@ -145,11 +143,11 @@ export function LiquidityPanel({
   const handleRemoveLiquidity = async (position: LPPosition) => {
     try {
       const sharesToRemove = position.shares * BigInt(removePercent) / 100n;
-      const txHash = await removeLiquidity({
+      const result = await removeLiquidity({
         poolId: position.poolId,
         shares: sharesToRemove,
       });
-      onComplete?.(txHash);
+      onComplete?.(result.txHash);
       // Refresh positions
       if (address) {
         const positionData = await getLPPositions(address);
@@ -161,22 +159,37 @@ export function LiquidityPanel({
   };
 
   // Auto-calculate paired amount based on pool ratio
-  const handleAmountAChange = (value: string) => {
+  const handleAmountAChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
     setAmountA(value);
-    if (selectedPool && value) {
+    if (selectedPool && value && selectedPool.reserveA > 0n) {
       const amountABigInt = parseAmount(value);
       const amountBBigInt = amountABigInt * selectedPool.reserveB / selectedPool.reserveA;
       setAmountB(formatAmount(amountBBigInt));
     }
   };
 
-  const handleAmountBChange = (value: string) => {
+  const handleAmountBChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
     setAmountB(value);
-    if (selectedPool && value) {
+    if (selectedPool && value && selectedPool.reserveB > 0n) {
       const amountBBigInt = parseAmount(value);
       const amountABigInt = amountBBigInt * selectedPool.reserveA / selectedPool.reserveB;
       setAmountA(formatAmount(amountABigInt));
     }
+  };
+
+  // Handle pool selection change
+  const handlePoolChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    const pool = pools.find(p => p.id === e.target.value);
+    setSelectedPool(pool || null);
+    setAmountA('');
+    setAmountB('');
+  };
+
+  // Handle remove percent change
+  const handleRemovePercentChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setRemovePercent(parseInt(e.target.value, 10));
   };
 
   if (!isConnected) {
@@ -236,12 +249,7 @@ export function LiquidityPanel({
                 <label>Select Pool</label>
                 <select
                   value={selectedPool?.id || ''}
-                  onChange={e => {
-                    const pool = pools.find(p => p.id === e.target.value);
-                    setSelectedPool(pool || null);
-                    setAmountA('');
-                    setAmountB('');
-                  }}
+                  onChange={handlePoolChange}
                 >
                   {pools.map(pool => (
                     <option key={pool.id} value={pool.id}>
@@ -275,7 +283,7 @@ export function LiquidityPanel({
                       type="number"
                       placeholder="0.0"
                       value={amountA}
-                      onChange={e => handleAmountAChange(e.target.value)}
+                      onChange={handleAmountAChange}
                     />
                   </div>
 
@@ -289,7 +297,7 @@ export function LiquidityPanel({
                       type="number"
                       placeholder="0.0"
                       value={amountB}
-                      onChange={e => handleAmountBChange(e.target.value)}
+                      onChange={handleAmountBChange}
                     />
                   </div>
 
@@ -324,7 +332,7 @@ export function LiquidityPanel({
                       min="1"
                       max="100"
                       value={removePercent}
-                      onChange={e => setRemovePercent(parseInt(e.target.value))}
+                      onChange={handleRemovePercentChange}
                     />
                     <div className="preset-buttons">
                       {[25, 50, 75, 100].map(percent => (
