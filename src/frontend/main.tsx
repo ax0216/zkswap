@@ -9,13 +9,18 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 
-// Import global styles
+// Import Tailwind CSS and global styles
+import './styles/globals.css';
+
+// Import legacy component styles for backwards compatibility
 import { allStyles } from './components';
 
-// Inject component styles into the document
-const styleElement = document.createElement('style');
-styleElement.textContent = allStyles;
-document.head.appendChild(styleElement);
+// Inject legacy component styles into the document (for non-Tailwind components)
+if (allStyles) {
+  const styleElement = document.createElement('style');
+  styleElement.textContent = allStyles;
+  document.head.appendChild(styleElement);
+}
 
 // Get the root element
 const rootElement = document.getElementById('root');

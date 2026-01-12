@@ -96,11 +96,19 @@ function VaultCore() {
   );
 }
 
-function FloatingParticles({ count = 100 }) {
+interface Particle {
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  speed: number;
+}
+
+function FloatingParticles({ count = 100 }: { count?: number }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
-  const particles = useMemo(() => {
-    const temp = [];
+  const particles = useMemo<Particle[]>(() => {
+    const temp: Particle[] = [];
     for (let i = 0; i < count; i++) {
       const x = (Math.random() - 0.5) * 20;
       const y = (Math.random() - 0.5) * 20;
