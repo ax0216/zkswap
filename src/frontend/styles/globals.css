@@ -259,7 +259,7 @@
 
   /* Feature Card */
   .feature-card {
-    @apply relative overflow-hidden rounded-2xl p-8 group cursor-pointer;
+    @apply relative overflow-hidden rounded-2xl p-8 cursor-pointer;
     @apply transform transition-all duration-500;
     background: rgba(15, 15, 35, 0.6);
     backdrop-filter: blur(20px);
