@@ -359,9 +359,24 @@ export const swapFormStyles = `
   .zkswap-swap-form {
     background: #1f2937;
     border: 1px solid #374151;
-    border-radius: 16px;
-    padding: 24px;
-    max-width: 480px;
+    border-radius: 12px;
+    padding: 16px;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-swap-form {
+      border-radius: 16px;
+      padding: 20px;
+      max-width: 480px;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .zkswap-swap-form {
+      padding: 24px;
+    }
   }
 
   .zkswap-swap-form .form-header {
@@ -414,16 +429,32 @@ export const swapFormStyles = `
 
   .zkswap-swap-form .slippage-options {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-swap-form .slippage-options {
+      gap: 8px;
+    }
   }
 
   .zkswap-swap-form .slippage-options button {
-    padding: 8px 16px;
+    padding: 6px 12px;
     border: 1px solid #374151;
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
     color: #9ca3af;
     cursor: pointer;
+    font-size: 13px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-swap-form .slippage-options button {
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
   }
 
   .zkswap-swap-form .slippage-options button.active {
@@ -470,23 +501,38 @@ export const swapFormStyles = `
 
   .zkswap-swap-form .input-row input {
     flex: 1;
-    padding: 12px 0;
+    padding: 8px 0;
     border: none;
     background: transparent;
     color: #e5e7eb;
-    font-size: 24px;
+    font-size: 18px;
     outline: none;
   }
 
+  @media (min-width: 640px) {
+    .zkswap-swap-form .input-row input {
+      padding: 12px 0;
+      font-size: 24px;
+    }
+  }
+
   .zkswap-swap-form .input-row select {
-    padding: 8px 12px;
+    padding: 6px 8px;
     border: 1px solid #374151;
-    border-radius: 12px;
+    border-radius: 8px;
     background: #374151;
     color: #e5e7eb;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-swap-form .input-row select {
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 16px;
+    }
   }
 
   .zkswap-swap-form .swap-direction {
