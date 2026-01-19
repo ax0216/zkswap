@@ -2,8 +2,8 @@ import React from 'react';
 
 export function Footer() {
   return (
-    <footer className="relative py-12 sm:py-16 border-t border-white/10">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <footer className="w-full relative py-12 sm:py-16 border-t border-white/10">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-8 sm:gap-12">
           <div className="md:col-span-2">
             <div className="flex items-center gap-3 mb-4">

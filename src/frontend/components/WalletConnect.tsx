@@ -157,16 +157,26 @@ export const walletConnectStyles = `
   .zkswap-wallet-connect {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 24px;
+    gap: 6px;
+    padding: 10px 16px;
     border: none;
-    border-radius: 12px;
+    border-radius: 10px;
     background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     color: white;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-wallet-connect {
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-size: 16px;
+    }
   }
 
   .zkswap-wallet-connect:hover {
@@ -177,12 +187,22 @@ export const walletConnectStyles = `
   .zkswap-wallet-connecting {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 24px;
-    border-radius: 12px;
+    gap: 6px;
+    padding: 10px 16px;
+    border-radius: 10px;
     background: #374151;
     color: #9ca3af;
-    font-size: 16px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-wallet-connecting {
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-size: 16px;
+    }
   }
 
   .zkswap-wallet-connecting .spinner {
@@ -286,17 +306,27 @@ export const walletConnectStyles = `
   .zkswap-wallet-error {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 12px 16px;
-    border-radius: 12px;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: 10px;
     background: #7f1d1d;
     color: #fca5a5;
     max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-wallet-error {
+      gap: 8px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      flex-wrap: nowrap;
+    }
   }
 
   .zkswap-wallet-error .error-icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: #ef4444;
     color: white;
@@ -304,34 +334,62 @@ export const walletConnectStyles = `
     align-items: center;
     justify-content: center;
     font-weight: bold;
-    font-size: 12px;
+    font-size: 11px;
     flex-shrink: 0;
     margin-top: 2px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-wallet-error .error-icon {
+      width: 20px;
+      height: 20px;
+      font-size: 12px;
+    }
   }
 
   .zkswap-wallet-error .error-content {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     min-width: 0;
   }
 
+  @media (min-width: 640px) {
+    .zkswap-wallet-error .error-content {
+      gap: 6px;
+    }
+  }
+
   .zkswap-wallet-error .error-message {
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.4;
     word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-wallet-error .error-message {
+      font-size: 14px;
+    }
   }
 
   .zkswap-wallet-error .wallet-link {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     color: #fbbf24;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     text-decoration: underline;
     transition: color 0.2s ease;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-wallet-error .wallet-link {
+      gap: 4px;
+      font-size: 13px;
+    }
   }
 
   .zkswap-wallet-error .wallet-link:hover {

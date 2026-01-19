@@ -256,7 +256,7 @@ export function RoadmapTimeline() {
   const [expandedPhase, setExpandedPhase] = useState<string | null>('q1-2026');
 
   return (
-    <section className="py-24 relative overflow-hidden">
+    <section className="w-full py-24 relative overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-gradient-midnight" />
       <div className="absolute inset-0 grid-pattern opacity-50" />

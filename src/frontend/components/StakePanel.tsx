@@ -344,30 +344,65 @@ export const stakePanelStyles = `
   .zkswap-stake-panel {
     background: #1f2937;
     border: 1px solid #374151;
-    border-radius: 16px;
-    padding: 24px;
-    max-width: 480px;
+    border-radius: 12px;
+    padding: 16px;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel {
+      border-radius: 16px;
+      padding: 20px;
+      max-width: 480px;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .zkswap-stake-panel {
+      padding: 24px;
+    }
   }
 
   .zkswap-stake-panel .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel .panel-header {
+      margin-bottom: 20px;
+    }
   }
 
   .zkswap-stake-panel .panel-header h2 {
     margin: 0;
     color: #e5e7eb;
-    font-size: 20px;
+    font-size: 18px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel .panel-header h2 {
+      font-size: 20px;
+    }
   }
 
   .zkswap-stake-panel .tier-badge {
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 16px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel .tier-badge {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+    }
   }
 
   .zkswap-stake-panel .tier-badge.basic {
@@ -563,12 +598,21 @@ export const stakePanelStyles = `
   .zkswap-stake-panel .benefit {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px;
+    gap: 6px;
+    padding: 8px;
     background: #111827;
-    border-radius: 8px;
+    border-radius: 6px;
     color: #6b7280;
-    font-size: 13px;
+    font-size: 12px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel .benefit {
+      gap: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
   }
 
   .zkswap-stake-panel .benefit.unlocked {
@@ -576,8 +620,16 @@ export const stakePanelStyles = `
   }
 
   .zkswap-stake-panel .benefit-icon {
-    width: 16px;
+    width: 14px;
     text-align: center;
+    font-size: 12px;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel .benefit-icon {
+      width: 16px;
+      font-size: 14px;
+    }
   }
 
   .zkswap-stake-panel .benefit.unlocked .benefit-icon {
@@ -587,7 +639,14 @@ export const stakePanelStyles = `
   .zkswap-stake-panel .benefit-threshold {
     margin-left: auto;
     color: #6b7280;
-    font-size: 11px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  @media (min-width: 640px) {
+    .zkswap-stake-panel .benefit-threshold {
+      font-size: 11px;
+    }
   }
 
   .zkswap-stake-panel .error-message {

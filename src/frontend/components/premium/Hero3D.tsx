@@ -176,14 +176,14 @@ interface Hero3DProps {
 
 export function Hero3D({ onGetStarted }: Hero3DProps) {
   return (
-    <section className="relative min-h-screen flex items-center overflow-hidden">
+    <section className="w-full relative min-h-screen flex items-center overflow-hidden py-16 sm:py-20 md:py-0">
       {/* Background Gradient Mesh */}
       <div className="absolute inset-0 bg-gradient-midnight" />
       <div className="absolute inset-0 bg-mesh-gradient opacity-60" />
       <div className="absolute inset-0 grid-pattern" />
 
-      {/* 3D Canvas */}
-      <div className="absolute inset-0 z-0">
+      {/* 3D Canvas - hide on small mobile */}
+      <div className="absolute inset-0 z-0 opacity-30 sm:opacity-50 md:opacity-70 lg:opacity-100">
         <Canvas camera={{ position: [0, 0, 8], fov: 45 }}>
           <Suspense fallback={null}>
             <Scene />
@@ -193,7 +193,7 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
 
       {/* Content Overlay */}
       <div className="relative z-10 section-container w-full">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
+        <div className="grid lg:grid-cols-2 gap-8 sm:gap-12 items-center">
           {/* Text Content */}
           <motion.div
             initial={{ opacity: 0, x: -50 }}
@@ -206,10 +206,10 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 mb-6"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-white/5 border border-white/10 mb-4 sm:mb-6"
             >
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-sm text-gray-300">Live on Midnight Testnet</span>
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-xs sm:text-sm text-gray-300">Live on Midnight Testnet</span>
             </motion.div>
 
             {/* Main Headline */}
@@ -217,7 +217,7 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3, duration: 0.8 }}
-              className="text-5xl md:text-7xl font-bold mb-6 leading-tight"
+              className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold mb-4 sm:mb-6 leading-tight"
             >
               <span className="text-white">Private Swaps.</span>
               <br />
@@ -229,7 +229,7 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5, duration: 0.8 }}
-              className="text-xl text-gray-400 mb-8 max-w-lg mx-auto lg:mx-0"
+              className="text-sm sm:text-base md:text-lg lg:text-xl text-gray-400 mb-6 sm:mb-8 max-w-lg mx-auto lg:mx-0 leading-relaxed"
             >
               The first privacy-preserving DEX on Midnight Network.
               Your balances and transactions protected by cutting-edge ZK proofs.
@@ -240,16 +240,16 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.7, duration: 0.8 }}
-              className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start"
+              className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center lg:justify-start"
             >
               <button
                 onClick={onGetStarted}
-                className="btn-neon text-lg px-8 py-4 group"
+                className="btn-neon text-sm sm:text-base md:text-lg px-6 sm:px-8 py-3 sm:py-4 group"
               >
-                <span className="relative z-10 flex items-center gap-2">
+                <span className="relative z-10 flex items-center justify-center gap-2">
                   Launch App
                   <svg
-                    className="w-5 h-5 transform group-hover:translate-x-1 transition-transform"
+                    className="w-4 h-4 sm:w-5 sm:h-5 transform group-hover:translate-x-1 transition-transform"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -259,7 +259,7 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
                 </span>
               </button>
 
-              <button className="px-8 py-4 rounded-xl border border-white/20 text-white font-semibold hover:bg-white/5 hover:border-white/30 transition-all duration-300">
+              <button className="px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base rounded-lg sm:rounded-xl border border-white/20 text-white font-semibold hover:bg-white/5 hover:border-white/30 transition-all duration-300">
                 Read Docs
               </button>
             </motion.div>
@@ -269,42 +269,42 @@ export function Hero3D({ onGetStarted }: Hero3DProps) {
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.9, duration: 0.8 }}
-              className="grid grid-cols-3 gap-8 mt-12 pt-8 border-t border-white/10"
+              className="grid grid-cols-3 gap-4 sm:gap-6 md:gap-8 mt-8 sm:mt-12 pt-6 sm:pt-8 border-t border-white/10"
             >
               <div>
-                <div className="text-3xl font-bold gradient-text">$0</div>
-                <div className="text-sm text-gray-500">TVL (Testnet)</div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">$0</div>
+                <div className="text-xs sm:text-sm text-gray-500 mt-1">TVL (Testnet)</div>
               </div>
               <div>
-                <div className="text-3xl font-bold gradient-text">0.5%</div>
-                <div className="text-sm text-gray-500">Swap Fee</div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">0.5%</div>
+                <div className="text-xs sm:text-sm text-gray-500 mt-1">Swap Fee</div>
               </div>
               <div>
-                <div className="text-3xl font-bold gradient-text">100%</div>
-                <div className="text-sm text-gray-500">Private</div>
+                <div className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">100%</div>
+                <div className="text-xs sm:text-sm text-gray-500 mt-1">Private</div>
               </div>
             </motion.div>
           </motion.div>
 
           {/* 3D Vault Space (handled by canvas behind) */}
-          <div className="hidden lg:block h-[500px]" />
+          <div className="hidden lg:block h-[400px] xl:h-[500px]" />
         </div>
       </div>
 
-      {/* Scroll Indicator */}
+      {/* Scroll Indicator - hidden on mobile */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 1.2 }}
-        className="absolute bottom-8 left-1/2 transform -translate-x-1/2"
+        className="hidden sm:block absolute bottom-6 sm:bottom-8 left-1/2 transform -translate-x-1/2"
       >
         <motion.div
           animate={{ y: [0, 10, 0] }}
           transition={{ repeat: Infinity, duration: 1.5 }}
-          className="flex flex-col items-center gap-2 text-gray-500"
+          className="flex flex-col items-center gap-1.5 sm:gap-2 text-gray-500"
         >
           <span className="text-xs uppercase tracking-wider">Scroll to explore</span>
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
           </svg>
         </motion.div>
