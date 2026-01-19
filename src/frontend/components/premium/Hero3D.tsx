@@ -176,7 +176,7 @@ interface Hero3DProps {
 
 export function Hero3D({ onGetStarted }: Hero3DProps) {
   return (
-    <section className="relative min-h-screen flex items-center overflow-hidden py-16 sm:py-20 md:py-0">
+    <section className="w-full relative min-h-screen flex items-center overflow-hidden py-16 sm:py-20 md:py-0">
       {/* Background Gradient Mesh */}
       <div className="absolute inset-0 bg-gradient-midnight" />
       <div className="absolute inset-0 bg-mesh-gradient opacity-60" />

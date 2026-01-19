@@ -28,7 +28,7 @@ export function Header({ viewMode, onLogoClick }: HeaderProps) {
           : 'bg-transparent'
       }`}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 md:h-20">
           <motion.div
             className="flex items-center gap-3 cursor-pointer"

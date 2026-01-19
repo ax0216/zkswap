@@ -31,7 +31,7 @@ function TradingApp({ onBack }: TradingAppProps) {
   };
 
   return (
-    <div className="min-h-screen pt-16 sm:pt-20 md:pt-24 pb-8 sm:pb-12">
+    <div className="w-full min-h-screen pt-16 sm:pt-20 md:pt-24 pb-8 sm:pb-12">
       <div className="w-full max-w-4xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
         <motion.button
           initial={{ opacity: 0, x: -20 }}
@@ -136,18 +136,18 @@ function LandingPage({ onLaunchApp }: LandingPageProps) {
   return (
     <>
       <Hero3D onGetStarted={onLaunchApp} />
-      <div id="features">
+      <div id="features" className="w-full">
         <FeatureCarousel />
       </div>
-      <div id="security">
+      <div id="security" className="w-full">
         <SecurityDemo />
       </div>
-      <div id="roadmap">
+      <div id="roadmap" className="w-full">
         <RoadmapTimeline />
       </div>
-      <section className="py-12 sm:py-16 md:py-20 lg:py-24 relative overflow-hidden">
+      <section className="w-full py-12 sm:py-16 md:py-20 lg:py-24 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-t from-purple-950/20 to-transparent" />
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -190,7 +190,7 @@ function AppContent() {
   };
 
   return (
-    <div ref={appRef} className="min-h-screen bg-midnight-950 text-white">
+    <div ref={appRef} className="w-full min-h-screen bg-midnight-950 text-white">
       <CSSParticleField count={30} />
       <Header viewMode={viewMode} onLogoClick={handleBackToLanding} />
       <AnimatePresence mode="wait">
@@ -200,6 +200,7 @@ function AppContent() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            className="w-full"
           >
             <LandingPage onLaunchApp={handleLaunchApp} />
           </motion.div>
@@ -209,6 +210,7 @@ function AppContent() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            className="w-full"
           >
             <TradingApp onBack={handleBackToLanding} />
           </motion.div>

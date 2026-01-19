@@ -255,7 +255,7 @@ export function FeatureCarousel() {
   const [activeFeature, setActiveFeature] = useState<string | null>(null);
 
   return (
-    <section className="py-24 relative overflow-hidden">
+    <section className="w-full py-24 relative overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-gradient-midnight opacity-50" />
       <div className="absolute inset-0 grid-pattern" />
