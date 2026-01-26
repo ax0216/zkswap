@@ -473,7 +473,9 @@ export const liquidityPanelStyles = `
     border: 1px solid #374151;
     border-radius: 16px;
     padding: 24px;
+    width: 100%;
     max-width: 520px;
+    margin: 0 auto;
   }
 
   .zkswap-liquidity-panel .panel-header {

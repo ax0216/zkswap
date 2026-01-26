@@ -248,6 +248,7 @@ export function PoolStats({ className = '' }: PoolStatsProps): JSX.Element {
 
 export const poolStatsStyles = `
   .zkswap-pool-stats {
+    width: 100%;
     max-width: 1200px;
     margin: 0 auto;
   }
