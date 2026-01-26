@@ -32,7 +32,7 @@ function TradingApp({ onBack }: TradingAppProps) {
 
   return (
     <div className="w-full min-h-screen pt-16 sm:pt-20 md:pt-24 pb-8 sm:pb-12">
-      <div className="w-full max-w-4xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
+      <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <motion.button
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}

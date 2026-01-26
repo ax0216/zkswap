@@ -348,6 +348,7 @@ export const stakePanelStyles = `
     padding: 16px;
     width: 100%;
     max-width: 100%;
+    margin: 0 auto;
   }
 
   @media (min-width: 640px) {
