@@ -20,6 +20,8 @@ export interface MidnightWalletProvider {
   signMessage(message: string, address: string): Promise<string>;
 }
 
+export type ModalType = 'loading' | 'success' | 'error' | 'no-wallet' | 'canceled' | 'no-accounts' | null;
+
 export interface WalletState {
   isConnected: boolean;
   isConnecting: boolean;
@@ -27,6 +29,9 @@ export interface WalletState {
   balance: WalletBalance | null;
   provider: MidnightWalletProvider | null;
   error: string | null;
+  modalOpen: boolean;
+  modalType: ModalType;
+  modalMessage: string | null;
 }
 
 export interface WalletBalance {
@@ -40,6 +45,8 @@ export interface WalletContextValue extends WalletState {
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
   signMessage: (message: string) => Promise<string>;
+  openModal: (type: ModalType, message?: string) => void;
+  closeModal: () => void;
   /** Whether user has premium status (for display purposes, actual check is in contract) */
   isPremium: boolean;
 }
@@ -67,10 +74,34 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
     balance: null,
     provider: null,
     error: null,
+    modalOpen: false,
+    modalType: null,
+    modalMessage: null,
   });
+
+  // Modal control functions
+  const openModal = useCallback((type: ModalType, message?: string) => {
+    setState(prev => ({
+      ...prev,
+      modalOpen: true,
+      modalType: type,
+      modalMessage: message || null,
+    }));
+  }, []);
+
+  const closeModal = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      modalOpen: false,
+      modalType: null,
+      modalMessage: null,
+    }));
+  }, []);
 
   // Connect to wallet
   const connect = useCallback(async () => {
+    // Open loading modal
+    openModal('loading');
     setState(prev => ({ ...prev, isConnecting: true, error: null }));
 
     try {
@@ -100,13 +131,24 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
       }
 
       if (!walletApi) {
-        throw new Error(
-          'No Cardano wallet detected. Please install Lace wallet and enable the Midnight Testnet profile. Get Lace at: https://lace.io'
-        );
+        setState(prev => ({ ...prev, isConnecting: false }));
+        openModal('no-wallet');
+        return;
       }
 
       // Enable wallet API
-      const api = await walletApi.enable();
+      let api;
+      try {
+        api = await walletApi.enable();
+      } catch (enableError: any) {
+        // User canceled or rejected connection
+        if (enableError?.message?.includes('cancel') || enableError?.code === 2) {
+          setState(prev => ({ ...prev, isConnecting: false }));
+          openModal('canceled');
+          return;
+        }
+        throw enableError;
+      }
 
       if (!api) {
         throw new Error(`Failed to enable ${walletName} wallet. Please try again.`);
@@ -115,9 +157,12 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
       // Get wallet addresses
       const addresses = await api.getUsedAddresses();
       if (!addresses || addresses.length === 0) {
-        throw new Error(
+        setState(prev => ({ ...prev, isConnecting: false }));
+        openModal(
+          'no-accounts',
           `No addresses found in ${walletName}. Make sure your Midnight Testnet profile is active in wallet settings.`
         );
+        return;
       }
 
       const address = addresses[0];
@@ -143,19 +188,30 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
         balance,
         provider,
         error: null,
+        modalOpen: true,
+        modalType: 'success',
+        modalMessage: null,
       });
 
       // Store connection preference
       localStorage.setItem('zkswap_wallet_connected', 'true');
+
+      // Auto-close success modal after 2 seconds
+      setTimeout(() => {
+        closeModal();
+      }, 2000);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to connect wallet';
       setState(prev => ({
         ...prev,
         isConnecting: false,
         error: message,
+        modalOpen: true,
+        modalType: 'error',
+        modalMessage: message,
       }));
     }
-  }, []);
+  }, [openModal, closeModal]);
 
   // Disconnect wallet
   const disconnect = useCallback(() => {
@@ -166,6 +222,9 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
       balance: null,
       provider: null,
       error: null,
+      modalOpen: false,
+      modalType: null,
+      modalMessage: null,
     });
     localStorage.removeItem('zkswap_wallet_connected');
   }, []);
@@ -246,6 +305,8 @@ export function WalletProvider({ children, autoConnect = false }: WalletProvider
     disconnect,
     refreshBalance,
     signMessage,
+    openModal,
+    closeModal,
     isPremium,
   };
 

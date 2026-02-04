@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { useWallet } from '../context/WalletContext';
+import { WalletModal } from './WalletModal';
 
 // ============================================================================
 // Types
@@ -35,6 +36,10 @@ export function WalletConnect({
     error,
     connect,
     disconnect,
+    modalOpen,
+    modalType,
+    modalMessage,
+    closeModal,
   } = useWallet();
 
   // Format address for display
@@ -50,33 +55,6 @@ export function WalletConnect({
     const fractionStr = fraction.toString().padStart(decimals, '0').slice(0, 4);
     return `${whole.toLocaleString()}.${fractionStr}`;
   };
-
-  // Render error state
-  if (error) {
-    const showLaceLink = error.includes('lace.io') || error.includes('Cardano wallet');
-
-    return (
-      <div className={`zkswap-wallet-error ${className}`}>
-        <div className="error-icon">!</div>
-        <div className="error-content">
-          <span className="error-message">{error}</span>
-          {showLaceLink && (
-            <a
-              href="https://lace.io"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="wallet-link"
-            >
-              Get Lace Wallet →
-            </a>
-          )}
-        </div>
-        <button onClick={connect} className="retry-button">
-          Retry
-        </button>
-      </div>
-    );
-  }
 
   // Render connecting state
   if (isConnecting) {
@@ -135,17 +113,29 @@ export function WalletConnect({
 
   // Render disconnected state
   return (
-    <button
-      className={`zkswap-wallet-connect ${className}`}
-      onClick={connect}
-    >
-      <span className="wallet-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8zm4-2.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-        </svg>
-      </span>
-      <span>Connect Wallet</span>
-    </button>
+    <>
+      <button
+        className={`zkswap-wallet-connect ${className}`}
+        onClick={connect}
+      >
+        <span className="wallet-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8zm4-2.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+          </svg>
+        </span>
+        <span>Connect Wallet</span>
+      </button>
+
+      {/* Wallet Connection Modal */}
+      <WalletModal
+        isOpen={modalOpen}
+        type={modalType || 'loading'}
+        message={modalMessage || undefined}
+        address={address}
+        onClose={closeModal}
+        onRetry={connect}
+      />
+    </>
   );
 }
 
@@ -153,7 +143,11 @@ export function WalletConnect({
 // Styles (CSS-in-JS)
 // ============================================================================
 
+import { walletModalStyles } from './WalletModal';
+
 export const walletConnectStyles = `
+  ${walletModalStyles}
+
   .zkswap-wallet-connect {
     display: flex;
     align-items: center;
