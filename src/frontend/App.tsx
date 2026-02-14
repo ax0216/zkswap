@@ -190,7 +190,7 @@ function AppContent() {
   };
 
   return (
-    <div ref={appRef} className="w-full min-h-screen bg-midnight-950 text-white">
+    <div ref={appRef} className="w-full min-h-screen bg-midnight-950 text-white overflow-x-hidden">
       <CSSParticleField count={30} />
       <Header viewMode={viewMode} onLogoClick={handleBackToLanding} />
       <AnimatePresence mode="wait">
